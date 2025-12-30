@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Overpass:ital,wght@0,100..900;1,100..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght@6..144,1..1000&family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&family=Momo+Trust+Sans:wght@200..800&family=Outfit:wght@100..900&family=Overpass:ital,wght@0,100..900;1,100..900&family=Vend+Sans:ital,wght@0,300..700;1,300..700&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
 
@@ -43,7 +43,7 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  --font-sans: "Overpass", sans-serif;
+  --font-sans: "Google Sans Flex", sans-serif;
 }
 
 :root {
@@ -143,15 +143,94 @@
   background: oklch(0.5 0 0 / 50%);
 }
 
-/* Fullscreen video player container */
-#video-player-container:fullscreen {
-  background: black;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+/* Plyr player styling */
+.plyr-container {
+  --plyr-color-main: oklch(0.985 0 0);
+  --plyr-video-background: black;
+  --plyr-menu-background: oklch(0.205 0 0 / 95%);
+  --plyr-menu-color: oklch(0.985 0 0);
+  --plyr-menu-border-color: oklch(1 0 0 / 10%);
+  --plyr-menu-radius: 0.75rem;
+  --plyr-control-spacing: 10px;
+  --plyr-control-radius: 0.5rem;
+  --plyr-range-track-height: 4px;
+  --plyr-range-thumb-height: 12px;
+  --plyr-tooltip-background: oklch(0.205 0 0 / 95%);
+  --plyr-tooltip-color: oklch(0.985 0 0);
+  --plyr-tooltip-radius: 0.5rem;
+  --plyr-font-size-small: 13px;
+  --plyr-font-family: "Overpass", sans-serif;
+  --plyr-control-icon-size: 18px;
 }
 
-#video-player-container:fullscreen media-player {
-  width: 100vw !important;
-  height: 100vh !important;
+.plyr-container .plyr {
+  width: 100%;
+  height: 100%;
+}
+
+.plyr-container .plyr__video-wrapper {
+  height: 100%;
+}
+
+.plyr-container .plyr__controls {
+  background: linear-gradient(transparent, oklch(0 0 0 / 75%));
+  padding: 1rem;
+}
+
+/* Control button styling - fix hover visibility */
+.plyr-container .plyr__control {
+  color: oklch(0.985 0 0) !important;
+  background: transparent !important;
+}
+
+.plyr-container .plyr__control:hover {
+  color: oklch(0.985 0 0) !important;
+  background: oklch(1 0 0 / 20%) !important;
+}
+
+.plyr-container .plyr__control:focus {
+  color: oklch(0.985 0 0) !important;
+  background: oklch(1 0 0 / 20%) !important;
+}
+
+.plyr-container .plyr__control svg {
+  fill: currentColor !important;
+}
+
+.plyr-container .plyr__control--pressed {
+  color: oklch(0.985 0 0) !important;
+  background: oklch(1 0 0 / 30%) !important;
+}
+
+/* Hide the large center play button for live TV */
+.plyr-container .plyr__control--overlaid {
+  display: none !important;
+}
+
+.plyr-container .plyr--full-ui input[type=range] {
+  color: oklch(0.985 0 0);
+}
+
+.plyr-container .plyr__menu__container {
+  background: oklch(0.205 0 0 / 95%);
+  backdrop-filter: blur(10px);
+}
+
+/* Volume slider styling */
+.plyr-container .plyr__volume {
+  min-width: 80px;
+}
+
+/* Fullscreen mode */
+.plyr-container .plyr--fullscreen-active {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+
+.plyr-container:fullscreen,
+.plyr-container:-webkit-full-screen {
+  width: 100vw;
+  height: 100vh;
+  background: black;
 }

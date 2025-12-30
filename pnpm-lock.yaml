@@ -56,12 +56,21 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      hls.js:
+        specifier: ^1.6.15
+        version: 1.6.15
       iptv-playlist-parser:
         specifier: ^0.15.1
         version: 0.15.1
       lucide-react:
         specifier: ^0.562.0
         version: 0.562.0(react@19.2.3)
+      plyr:
+        specifier: ^3.8.3
+        version: 3.8.3
+      plyr-react:
+        specifier: ^6.0.0
+        version: 6.0.0(plyr@3.8.3)(react@19.2.3)
       react:
         specifier: ^19.1.0
         version: 19.2.3
@@ -1308,8 +1317,14 @@ packages:
   cookie-es@2.0.0:
     resolution: {integrity: sha512-RAj4E421UYRgqokKUmotqAwuplYw15qtdXfY+hGzgCJ/MBjCVZcSoHK/kH9kocfjRjcDME7IiDWR/1WX1TM2Pg==}
 
+  core-js@3.47.0:
+    resolution: {integrity: sha512-c3Q2VVkGAUyupsjRnaNX6u8Dq2vAdzm9iuPj5FW0fRxzlxgq9Q39MDq10IvmQSpLgHQNyQzQmOo6bgGHmH3NNg==}
+
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
+
+  custom-event-polyfill@1.0.7:
+    resolution: {integrity: sha512-TDDkd5DkaZxZFM8p+1I3yAlvM3rSr1wbrOliG4yJiwinMZN8z/iGL7BTlDkrJcYTmgUSb4ywVCc3ZaUtOtC76w==}
 
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
@@ -1457,6 +1472,9 @@ packages:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
 
+  hls.js@1.6.15:
+    resolution: {integrity: sha512-E3a5VwgXimGHwpRGV+WxRTKeSp2DW5DI5MWv34ulL3t5UNmyJWCQ1KmLEHbYzcfThfXG8amBL+fCYPneGHC4VA==}
+
   iptv-playlist-parser@0.15.1:
     resolution: {integrity: sha512-Fsm0uGiKsxZxOFvrpO0YY8eZtZLA9yqre7ne+T5AN2xvMsxFF2yY84CbFF6CTMYm7S+/AUQ+hPVst+uo9dGEuA==}
 
@@ -1586,6 +1604,9 @@ packages:
   lit-html@2.8.0:
     resolution: {integrity: sha512-o9t+MQM3P4y7M7yNzqAyjp7z+mQGa4NS4CxiyLqFPyFWyc4O+nodLrkrxSaCTrla6M5YOLaT3RpbbqjszB5g3Q==}
 
+  loadjs@4.3.0:
+    resolution: {integrity: sha512-vNX4ZZLJBeDEOBvdr2v/F+0aN5oMuPu7JTqrMwp+DtgK+AryOlpy6Xtm2/HpNr+azEa828oQjOtWsB6iDtSfSQ==}
+
   lru-cache@5.1.1:
     resolution: {integrity: sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==}
 
@@ -1642,6 +1663,16 @@ packages:
     resolution: {integrity: sha512-5gTmgEY/sqK6gFXLIsQNH19lWb4ebPDLA4SdLP7dsWkIXHWlG66oPuVvXSGFPppYZz8ZDZq0dYYrbHfBCVUb1Q==}
     engines: {node: '>=12'}
 
+  plyr-react@6.0.0:
+    resolution: {integrity: sha512-P8M+BuQoGrCd7m6K4QwwQlcSS1E26OeXuJTAmgLx11B9UqJrdc3Ka4TFwPwF3jul4EsVxSK9Zn1ME3DV8m9gdw==}
+    engines: {node: '>=16'}
+    peerDependencies:
+      plyr: ^3.7.7
+      react: '>=16.8'
+
+  plyr@3.8.3:
+    resolution: {integrity: sha512-0+iI5uw0WRvtKBpgPCkmQQv7ucHVQKTEo6UFJjgJ8cy/JZhy0dQqshHQVitHXV6l2O3MzhgnuvQ95VSkWcWeSw==}
+
   postcss@8.5.6:
     resolution: {integrity: sha512-3Ybi1tAuwAP9s0r1UQ2J4n5Y0G05bJkpUIO0/bI9MhwmD70S5aTWbXGBwxHrelT+XM1k6dM0pk+SwNkpTRN7Pg==}
     engines: {node: ^10 || ^12 || >=14}
@@ -1653,6 +1684,18 @@ packages:
 
   proxy-from-env@1.1.0:
     resolution: {integrity: sha512-D+zkORCbA9f1tdWRK0RaCR3GPv50cMxcrz4X8k5LTSUD1Dkw47mKJEZQNunItRTkWwgtaUSo1RVFRIG9ZXiFYg==}
+
+  rangetouch@2.0.1:
+    resolution: {integrity: sha512-sln+pNSc8NGaHoLzwNBssFSf/rSYkqeBXzX1AtJlkJiUaVSJSbRAWJk+4omsXkN+EJalzkZhWQ3th1m0FpR5xA==}
+
+  react-aptor@2.0.0:
+    resolution: {integrity: sha512-YnCayokuhAwmBBP4Oc0bbT2l6ApfsjbY3DEEVUddIKZEBlGl1npzjHHzWnSqWuboSbMZvRqUM01Io9yiIp1wcg==}
+    engines: {node: '>=12.7.0'}
+    peerDependencies:
+      react: '>=16.8'
+    peerDependenciesMeta:
+      react:
+        optional: true
 
   react-dom@19.2.3:
     resolution: {integrity: sha512-yELu4WmLPw5Mr/lmeEpox5rw3RETacE++JgHqQzd2dg+YbJuat3jH4ingc+WPZhxaoFzdv9y33G+F7Nl5O0GBg==}
@@ -1820,6 +1863,9 @@ packages:
     hasBin: true
     peerDependencies:
       browserslist: '>= 4.21.0'
+
+  url-polyfill@1.1.14:
+    resolution: {integrity: sha512-p4f3TTAG6ADVF3mwbXw7hGw+QJyw5CnNGvYh5fCuQQZIiuKUswqcznyV3pGDP9j0TSmC4UvRKm8kl1QsX1diiQ==}
 
   use-callback-ref@1.3.3:
     resolution: {integrity: sha512-jQL3lRnocaFtu3V00JToYz/4QkNWswxijDaCVNZRiRTO3HQDLsdu1ZtmIUvV4yPp+rvWm5j0y0TG/S61cuijTg==}
@@ -2974,7 +3020,11 @@ snapshots:
 
   cookie-es@2.0.0: {}
 
+  core-js@3.47.0: {}
+
   csstype@3.2.3: {}
+
+  custom-event-polyfill@1.0.7: {}
 
   debug@4.4.3:
     dependencies:
@@ -3120,6 +3170,8 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
+  hls.js@1.6.15: {}
+
   iptv-playlist-parser@0.15.1:
     dependencies:
       is-valid-path: 0.1.1
@@ -3214,6 +3266,8 @@ snapshots:
     dependencies:
       '@types/trusted-types': 2.0.7
 
+  loadjs@4.3.0: {}
+
   lru-cache@5.1.1:
     dependencies:
       yallist: 3.1.1
@@ -3252,6 +3306,20 @@ snapshots:
 
   picomatch@4.0.3: {}
 
+  plyr-react@6.0.0(plyr@3.8.3)(react@19.2.3):
+    dependencies:
+      plyr: 3.8.3
+      react: 19.2.3
+      react-aptor: 2.0.0(react@19.2.3)
+
+  plyr@3.8.3:
+    dependencies:
+      core-js: 3.47.0
+      custom-event-polyfill: 1.0.7
+      loadjs: 4.3.0
+      rangetouch: 2.0.1
+      url-polyfill: 1.1.14
+
   postcss@8.5.6:
     dependencies:
       nanoid: 3.3.11
@@ -3261,6 +3329,12 @@ snapshots:
   prettier@3.7.4: {}
 
   proxy-from-env@1.1.0: {}
+
+  rangetouch@2.0.1: {}
+
+  react-aptor@2.0.0(react@19.2.3):
+    optionalDependencies:
+      react: 19.2.3
 
   react-dom@19.2.3(react@19.2.3):
     dependencies:
@@ -3426,6 +3500,8 @@ snapshots:
       browserslist: 4.28.1
       escalade: 3.2.0
       picocolors: 1.1.1
+
+  url-polyfill@1.1.14: {}
 
   use-callback-ref@1.3.3(@types/react@19.2.7)(react@19.2.3):
     dependencies:

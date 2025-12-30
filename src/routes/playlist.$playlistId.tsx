@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { 
   Tv, 
   Search, 
@@ -36,9 +36,31 @@ function PlaylistPage() {
   const [selectedItem, setSelectedItem] = useState<PlaylistItem | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [sidebarVisible, setSidebarVisible] = useState(true)
+  const sidebarRef = useRef<HTMLDivElement>(null)
 
   // All items for M3U (since M3U usually loads everything at once)
   const [allM3UItems, setAllM3UItems] = useState<PlaylistItem[]>([])
+
+  // Handle click outside sidebar to dismiss it
+  const handleClickOutside = useCallback((event: MouseEvent) => {
+    if (
+      sidebarVisible && 
+      sidebarRef.current && 
+      !sidebarRef.current.contains(event.target as Node)
+    ) {
+      // Check if click is on the menu toggle button
+      const menuButton = document.querySelector('[data-menu-toggle]')
+      if (menuButton && menuButton.contains(event.target as Node)) {
+        return
+      }
+      setSidebarVisible(false)
+    }
+  }, [sidebarVisible])
+
+  useEffect(() => {
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [handleClickOutside])
 
   useEffect(() => {
     const p = getPlaylists().find((p) => p.id === playlistId)
@@ -119,33 +141,37 @@ function PlaylistPage() {
 
   return (
     <div className="flex flex-col h-screen w-full bg-[oklch(0.145_0_0)] overflow-hidden">
+      {/* Draggable title bar region for macOS */}
+      <div data-tauri-drag-region className="h-8 flex-shrink-0 w-full" />
+      
       {/* Apple TV Style Top Navigation */}
-      <nav className="flex items-center justify-center py-3 px-6 flex-shrink-0 z-20 relative">
-        <div className="flex items-center gap-1 bg-[oklch(0.205_0_0)] rounded-full p-1 border border-[oklch(1_0_0_/_0.1)]">
+      <nav className="flex items-center justify-center py-2 px-4 flex-shrink-0 z-20 relative -mt-8 pt-8">
+        <div className="flex items-center gap-1.5 bg-[oklch(0.205_0_0)] rounded-full p-1 border border-[oklch(1_0_0_/_0.1)]">
           {/* Menu Toggle Icon */}
           <button 
+            data-menu-toggle
             onClick={() => setSidebarVisible(!sidebarVisible)}
             className={cn(
-              "p-3 rounded-full transition-colors",
+              "p-2.5 rounded-full transition-colors",
               sidebarVisible ? "bg-[oklch(0.985_0_0)] text-[oklch(0.145_0_0)]" : "text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0_/_0.1)]"
             )}
           >
-            <Menu className="h-5 w-5" />
+            <Menu className="h-4 w-4" />
           </button>
           
           {/* Grid Icon - Home */}
           <button 
             onClick={() => navigate({ to: '/' })}
-            className="p-3 rounded-full hover:bg-[oklch(1_0_0_/_0.1)] transition-colors text-[oklch(0.985_0_0)]"
+            className="p-2.5 rounded-full hover:bg-[oklch(1_0_0_/_0.1)] transition-colors text-[oklch(0.985_0_0)]"
           >
-            <LayoutGrid className="h-5 w-5" />
+            <LayoutGrid className="h-4 w-4" />
           </button>
           
           {/* TV Tab */}
           <button 
             onClick={() => setContentType('live')}
             className={cn(
-              "px-8 py-2 rounded-full text-base font-medium transition-all",
+              "px-6 py-1.5 rounded-full text-sm font-medium transition-all",
               contentType === 'live' 
                 ? "bg-[oklch(0.985_0_0)] text-[oklch(0.145_0_0)]" 
                 : "text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0_/_0.1)]"
@@ -158,7 +184,7 @@ function PlaylistPage() {
           <button 
             onClick={() => setContentType('movie')}
             className={cn(
-              "px-8 py-2 rounded-full text-base font-medium transition-all",
+              "px-6 py-1.5 rounded-full text-sm font-medium transition-all",
               contentType === 'movie' 
                 ? "bg-[oklch(0.985_0_0)] text-[oklch(0.145_0_0)]" 
                 : "text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0_/_0.1)]"
@@ -171,7 +197,7 @@ function PlaylistPage() {
           <button 
             onClick={() => setContentType('series')}
             className={cn(
-              "px-8 py-2 rounded-full text-base font-medium transition-all",
+              "px-6 py-1.5 rounded-full text-sm font-medium transition-all",
               contentType === 'series' 
                 ? "bg-[oklch(0.985_0_0)] text-[oklch(0.145_0_0)]" 
                 : "text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0_/_0.1)]"
@@ -181,93 +207,51 @@ function PlaylistPage() {
           </button>
           
           {/* Search Icon */}
-          <button className="p-3 rounded-full hover:bg-[oklch(1_0_0_/_0.1)] transition-colors text-[oklch(0.985_0_0)]">
-            <Search className="h-5 w-5" />
+          <button className="p-2.5 rounded-full hover:bg-[oklch(1_0_0_/_0.1)] transition-colors text-[oklch(0.985_0_0)]">
+            <Search className="h-4 w-4" />
           </button>
         </div>
       </nav>
 
       {/* Main Content Area - Relative container for overlay */}
       <div className="flex-1 relative overflow-hidden px-4 pb-4 pt-1">
-        {/* Video Player and Info - Full width, always visible */}
-        <div className="w-full h-full flex flex-col">
-          {/* Video Player */}
-          <div className="flex-1 rounded-2xl overflow-hidden bg-black min-h-0">
-            {selectedItem ? (
-              <VideoPlayer
-                title={selectedItem.name}
-                src={selectedItem.url}
-                autoplay
-                className="w-full h-full"
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center">
-                <div className="text-center text-[oklch(0.556_0_0)]">
-                  <Tv className="h-20 w-20 mx-auto mb-4 opacity-30" />
-                  <p className="text-lg">Select a channel to start watching</p>
-                </div>
+        {/* Video Player - Full width and height */}
+        <div className="w-full h-full rounded-2xl overflow-hidden bg-black">
+          {selectedItem ? (
+            <VideoPlayer
+              title={selectedItem.name}
+              src={selectedItem.url}
+              autoplay
+              isLive={contentType === 'live'}
+              channelInfo={{
+                name: selectedItem.name,
+                category: selectedItem.groupTitle,
+                logo: selectedItem.tvgLogo,
+                quality: quality || undefined,
+              }}
+              className="w-full h-full"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center">
+              <div className="text-center text-[oklch(0.556_0_0)]">
+                <Tv className="h-20 w-20 mx-auto mb-4 opacity-30" />
+                <p className="text-lg">Select a channel to start watching</p>
               </div>
-            )}
-          </div>
-
-          {/* Channel Info Bar */}
-          {selectedItem && (
-            <div className="mt-4 p-4 bg-[oklch(0.205_0_0_/_0.5)] rounded-2xl border border-[oklch(1_0_0_/_0.1)] flex items-center gap-4 flex-shrink-0">
-              {/* Channel Logo */}
-              {selectedItem.tvgLogo ? (
-                <img 
-                  src={selectedItem.tvgLogo} 
-                  alt="" 
-                  className="w-12 h-12 rounded-lg object-contain bg-[oklch(1_0_0_/_0.1)] flex-shrink-0"
-                />
-              ) : (
-                <div className="w-12 h-12 rounded-lg bg-[oklch(0.269_0_0)] flex items-center justify-center flex-shrink-0">
-                  <Tv className="h-6 w-6 text-[oklch(0.556_0_0)]" />
-                </div>
-              )}
-              
-              {/* Channel Info */}
-              <div className="flex-1 min-w-0">
-                <h2 className="text-[oklch(0.985_0_0)] font-semibold text-lg truncate">
-                  {selectedItem.name}
-                </h2>
-                <p className="text-[oklch(0.556_0_0)] text-sm truncate">
-                  {selectedItem.groupTitle || 'Unknown Category'}
-                </p>
-              </div>
-
-              {/* Quality Badge */}
-              {quality && (
-                <div className="flex-shrink-0">
-                  <span className="px-3 py-1 rounded-full text-xs font-semibold bg-[oklch(0.488_0.243_264.376)] text-[oklch(0.985_0_0)]">
-                    {quality.toUpperCase()}
-                  </span>
-                </div>
-              )}
-
-              {/* Stream Type Badge */}
-              {contentType === 'live' && (
-                <div className="flex-shrink-0">
-                  <span className="px-3 py-1 rounded-full text-xs font-semibold bg-[oklch(0.577_0.245_27.325)] text-[oklch(0.985_0_0)]">
-                    LIVE
-                  </span>
-                </div>
-              )}
             </div>
           )}
         </div>
 
         {/* Left Sidebar - Overlay on top of player */}
         {sidebarVisible && (
-          <div className="absolute top-1 left-0 bottom-4 w-[400px] z-10 pl-0">
+          <div ref={sidebarRef} className="absolute top-1 left-2 bottom-4 w-[340px] z-10">
             <div className="h-full flex flex-col bg-[oklch(0.145_0_0_/_0.9)] backdrop-blur-xl rounded-2xl border border-[oklch(1_0_0_/_0.1)] overflow-hidden">
               {/* Search Box */}
-              <div className="p-4 flex-shrink-0">
+              <div className="p-3 flex-shrink-0">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[oklch(0.556_0_0)]" />
                   <Input 
                     placeholder="Search" 
-                    className="pl-10 h-11 bg-[oklch(0.269_0_0)] border-0 rounded-xl text-[oklch(0.985_0_0)] placeholder:text-[oklch(0.556_0_0)] focus-visible:ring-1 focus-visible:ring-[oklch(1_0_0_/_0.3)]" 
+                    className="pl-9 h-9 bg-[oklch(0.269_0_0)] border-0 rounded-lg text-[oklch(0.985_0_0)] placeholder:text-[oklch(0.556_0_0)] focus-visible:ring-1 focus-visible:ring-[oklch(1_0_0_/_0.3)] text-sm" 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
@@ -278,7 +262,7 @@ function PlaylistPage() {
               {selectedCategory && (
                 <button
                   onClick={handleBackToCategories}
-                  className="mx-4 mb-2 flex items-center gap-2 text-sm text-[oklch(0.556_0_0)] hover:text-[oklch(0.985_0_0)] transition-colors flex-shrink-0"
+                  className="mx-3 mb-2 flex items-center gap-2 text-sm text-[oklch(0.556_0_0)] hover:text-[oklch(0.985_0_0)] transition-colors flex-shrink-0"
                 >
                   <ChevronRight className="h-4 w-4 rotate-180" />
                   Back to categories
@@ -287,7 +271,7 @@ function PlaylistPage() {
               
               {/* Scrollable List */}
               <div className="flex-1 overflow-y-auto min-h-0">
-                <div className="p-2 space-y-1">
+                <div className="px-2 pb-2 space-y-0.5">
                   {selectedCategory ? (
                     // Show Items (Channels) with logos
                     (displayItems as PlaylistItem[]).map((item) => (
@@ -295,7 +279,7 @@ function PlaylistPage() {
                         key={item.id}
                         onClick={() => setSelectedItem(item)}
                         className={cn(
-                          "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-left",
+                          "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-all text-left",
                           selectedItem?.id === item.id 
                             ? "bg-[oklch(0.269_0_0)]" 
                             : "hover:bg-[oklch(0.269_0_0_/_0.5)]"
@@ -306,20 +290,20 @@ function PlaylistPage() {
                           <img 
                             src={item.tvgLogo} 
                             alt="" 
-                            className="w-8 h-8 rounded object-contain bg-[oklch(1_0_0_/_0.1)] flex-shrink-0"
+                            className="w-7 h-7 rounded object-contain bg-[oklch(1_0_0_/_0.1)] shrink-0"
                             onError={(e) => {
                               e.currentTarget.style.display = 'none'
                             }}
                           />
                         ) : (
-                          <div className="w-8 h-8 rounded bg-[oklch(0.269_0_0)] flex items-center justify-center flex-shrink-0">
-                            <Tv className="h-4 w-4 text-[oklch(0.556_0_0)]" />
+                          <div className="w-7 h-7 rounded bg-[oklch(0.269_0_0)] flex items-center justify-center shrink-0">
+                            <Tv className="h-3.5 w-3.5 text-[oklch(0.556_0_0)]" />
                           </div>
                         )}
-                        <span className="text-[oklch(0.985_0_0)] text-sm font-medium truncate flex-1">
+                        <span className="text-[oklch(0.985_0_0)] text-sm truncate flex-1">
                           {item.name}
                         </span>
-                        <ChevronRight className="h-4 w-4 text-[oklch(0.556_0_0)] flex-shrink-0" />
+                        <ChevronRight className="h-3.5 w-3.5 text-[oklch(0.556_0_0)] shrink-0" />
                       </button>
                     ))
                   ) : (
@@ -328,12 +312,12 @@ function PlaylistPage() {
                       <button
                         key={cat.id}
                         onClick={() => handleCategorySelect(cat.id)}
-                        className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-[oklch(0.269_0_0_/_0.5)] transition-all text-left"
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg hover:bg-[oklch(0.269_0_0_/_0.5)] transition-all text-left"
                       >
-                        <span className="text-[oklch(0.985_0_0)] text-sm font-medium truncate flex-1">
+                        <span className="text-[oklch(0.985_0_0)] text-sm truncate flex-1">
                           {cat.name}
                         </span>
-                        <ChevronRight className="h-4 w-4 text-[oklch(0.556_0_0)] flex-shrink-0" />
+                        <ChevronRight className="h-3.5 w-3.5 text-[oklch(0.556_0_0)] shrink-0" />
                       </button>
                     ))
                   )}

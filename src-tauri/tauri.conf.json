@@ -12,12 +12,16 @@
   "app": {
     "windows": [
       {
-        "title": "watchtv",
-        "width": 800,
-        "height": 600,
+        "title": "WatchTV",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
         "resizable": true,
         "maximizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {
