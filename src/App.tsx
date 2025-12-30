@@ -11,7 +11,7 @@ function App() {
   }
 
   return (
-    <main className="container antialised">
+    <main className="container">
       <form
         className="row"
         onSubmit={(e) => {

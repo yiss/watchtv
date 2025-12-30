@@ -8,7 +8,10 @@ import {
   Menu,
   Plus,
   Trash2,
-  Pencil
+  Pencil,
+  Loader2,
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react'
 import { Playlist, PlaylistItem, Category } from '@/types'
 import { getPlaylists, saveLastViewed, deletePlaylist } from '@/lib/storage'
@@ -18,6 +21,7 @@ import { VideoPlayer } from '@/components/player/VideoPlayer'
 import { useNavigate } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
 import { AddPlaylistModal } from '@/components/playlist/AddPlaylistModal'
+import { SpotlightSearch } from '@/components/search/SpotlightSearch'
 
 export const Route = createFileRoute('/playlist/$playlistId')({
   component: PlaylistPage,
@@ -44,6 +48,9 @@ function PlaylistPage() {
   const [playlistMenuVisible, setPlaylistMenuVisible] = useState(false)
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [spotlightOpen, setSpotlightOpen] = useState(false)
   const sidebarRef = useRef<HTMLDivElement>(null)
   const playlistMenuRef = useRef<HTMLDivElement>(null)
 
@@ -113,10 +120,17 @@ function PlaylistPage() {
   }, [selectedItem, playlist, selectedCategory, contentType])
 
   const loadInitialData = async (p: Playlist) => {
+    setIsLoading(true)
+    setLoadError(null)
     try {
       if (p.type === 'm3u' && p.url) {
         const allItems = await fetchM3UPlaylist(p.url)
         setAllM3UItems(allItems)
+        
+        if (allItems.length === 0) {
+          setLoadError('No channels found in playlist. The playlist may be empty or in an unsupported format.')
+          return
+        }
         
         // Extract categories from M3U
         const uniqueCategories = Array.from(new Set(allItems.map(i => i.groupTitle).filter(Boolean)))
@@ -130,6 +144,9 @@ function PlaylistPage() {
       }
     } catch (error) {
       console.error('Failed to load playlist', error)
+      setLoadError('Failed to load playlist. Please check the URL and try again.')
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -282,8 +299,12 @@ function PlaylistPage() {
             Series
           </button>
           
-          {/* Search Icon */}
-          <button className="p-2.5 rounded-full hover:bg-[oklch(1_0_0_/_0.1)] transition-colors text-[oklch(0.985_0_0)]">
+          {/* Search Icon - Opens Spotlight Search */}
+          <button 
+            onClick={() => setSpotlightOpen(true)}
+            className="p-2.5 rounded-full hover:bg-[oklch(1_0_0_/_0.1)] transition-colors text-[oklch(0.985_0_0)] flex items-center gap-2"
+            title="Search (⌘K)"
+          >
             <Search className="h-4 w-4" />
           </button>
         </div>
@@ -293,7 +314,30 @@ function PlaylistPage() {
       <div className="flex-1 relative overflow-hidden px-4 pb-4 pt-1">
         {/* Video Player - Full width and height */}
         <div className="w-full h-full rounded-2xl overflow-hidden bg-black">
-          {selectedItem ? (
+          {isLoading ? (
+            <div className="w-full h-full flex items-center justify-center">
+              <div className="text-center text-[oklch(0.556_0_0)]">
+                <Loader2 className="h-12 w-12 mx-auto mb-4 animate-spin opacity-50" />
+                <p className="text-lg">Loading playlist...</p>
+                <p className="text-sm mt-2 opacity-70">This may take a moment for large playlists</p>
+              </div>
+            </div>
+          ) : loadError ? (
+            <div className="w-full h-full flex items-center justify-center">
+              <div className="text-center text-[oklch(0.556_0_0)] max-w-md px-4">
+                <AlertCircle className="h-12 w-12 mx-auto mb-4 text-[oklch(0.704_0.191_22.216)]" />
+                <p className="text-lg text-[oklch(0.985_0_0)] mb-2">Failed to Load Playlist</p>
+                <p className="text-sm opacity-70 mb-4">{loadError}</p>
+                <button
+                  onClick={() => playlist && loadInitialData(playlist)}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[oklch(0.269_0_0)] hover:bg-[oklch(0.3_0_0)] text-[oklch(0.985_0_0)] text-sm transition-colors"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Try Again
+                </button>
+              </div>
+            </div>
+          ) : selectedItem ? (
             <VideoPlayer
               title={selectedItem.name}
               src={selectedItem.url}
@@ -347,57 +391,71 @@ function PlaylistPage() {
               
               {/* Scrollable List */}
               <div className="flex-1 overflow-y-auto min-h-0">
-                <div className="px-2 pb-2 space-y-0.5">
-                  {selectedCategory ? (
-                    // Show Items (Channels) with logos
-                    (displayItems as PlaylistItem[]).map((item) => (
-                      <button
-                        key={item.id}
-                        onClick={() => setSelectedItem(item)}
-                        className={cn(
-                          "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-all text-left",
-                          selectedItem?.id === item.id 
-                            ? "bg-[oklch(0.269_0_0)]" 
-                            : "hover:bg-[oklch(0.269_0_0_/_0.5)]"
-                        )}
-                      >
-                        {/* Channel Logo */}
-                        {item.tvgLogo ? (
-                          <img 
-                            src={item.tvgLogo} 
-                            alt="" 
-                            className="w-7 h-7 rounded object-contain bg-[oklch(1_0_0_/_0.1)] shrink-0"
-                            onError={(e) => {
-                              e.currentTarget.style.display = 'none'
-                            }}
-                          />
-                        ) : (
-                          <div className="w-7 h-7 rounded bg-[oklch(0.269_0_0)] flex items-center justify-center shrink-0">
-                            <Tv className="h-3.5 w-3.5 text-[oklch(0.556_0_0)]" />
-                          </div>
-                        )}
-                        <span className="text-[oklch(0.985_0_0)] text-sm truncate flex-1">
-                          {item.name}
-                        </span>
-                        <ChevronRight className="h-3.5 w-3.5 text-[oklch(0.556_0_0)] shrink-0" />
-                      </button>
-                    ))
-                  ) : (
-                    // Show Categories
-                    (displayItems as Category[]).map((cat) => (
-                      <button
-                        key={cat.id}
-                        onClick={() => handleCategorySelect(cat.id)}
-                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg hover:bg-[oklch(0.269_0_0_/_0.5)] transition-all text-left"
-                      >
-                        <span className="text-[oklch(0.985_0_0)] text-sm truncate flex-1">
-                          {cat.name}
-                        </span>
-                        <ChevronRight className="h-3.5 w-3.5 text-[oklch(0.556_0_0)] shrink-0" />
-                      </button>
-                    ))
-                  )}
-                </div>
+                {isLoading ? (
+                  // Loading State
+                  <div className="flex flex-col items-center justify-center h-full py-12">
+                    <Loader2 className="h-8 w-8 text-[oklch(0.556_0_0)] animate-spin mb-3" />
+                    <p className="text-[oklch(0.556_0_0)] text-sm">Loading playlist...</p>
+                  </div>
+                ) : loadError ? (
+                  // Error State
+                  <div className="flex flex-col items-center justify-center h-full py-12 px-4">
+                    <AlertCircle className="h-8 w-8 text-[oklch(0.704_0.191_22.216)] mb-3" />
+                    <p className="text-[oklch(0.556_0_0)] text-sm text-center">{loadError}</p>
+                  </div>
+                ) : (
+                  <div className="px-2 pb-2 space-y-0.5">
+                    {selectedCategory ? (
+                      // Show Items (Channels) with logos
+                      (displayItems as PlaylistItem[]).map((item) => (
+                        <button
+                          key={item.id}
+                          onClick={() => setSelectedItem(item)}
+                          className={cn(
+                            "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-all text-left",
+                            selectedItem?.id === item.id 
+                              ? "bg-[oklch(0.269_0_0)]" 
+                              : "hover:bg-[oklch(0.269_0_0_/_0.5)]"
+                          )}
+                        >
+                          {/* Channel Logo */}
+                          {item.tvgLogo ? (
+                            <img 
+                              src={item.tvgLogo} 
+                              alt="" 
+                              className="w-7 h-7 rounded object-contain bg-[oklch(1_0_0_/_0.1)] shrink-0"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none'
+                              }}
+                            />
+                          ) : (
+                            <div className="w-7 h-7 rounded bg-[oklch(0.269_0_0)] flex items-center justify-center shrink-0">
+                              <Tv className="h-3.5 w-3.5 text-[oklch(0.556_0_0)]" />
+                            </div>
+                          )}
+                          <span className="text-[oklch(0.985_0_0)] text-sm truncate flex-1">
+                            {item.name}
+                          </span>
+                          <ChevronRight className="h-3.5 w-3.5 text-[oklch(0.556_0_0)] shrink-0" />
+                        </button>
+                      ))
+                    ) : (
+                      // Show Categories
+                      (displayItems as Category[]).map((cat) => (
+                        <button
+                          key={cat.id}
+                          onClick={() => handleCategorySelect(cat.id)}
+                          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg hover:bg-[oklch(0.269_0_0_/_0.5)] transition-all text-left"
+                        >
+                          <span className="text-[oklch(0.985_0_0)] text-sm truncate flex-1">
+                            {cat.name}
+                          </span>
+                          <ChevronRight className="h-3.5 w-3.5 text-[oklch(0.556_0_0)] shrink-0" />
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -487,6 +545,26 @@ function PlaylistPage() {
         }} 
         onSuccess={handleAddPlaylistSuccess}
         editPlaylist={editingPlaylist}
+      />
+
+      {/* Spotlight Search */}
+      <SpotlightSearch
+        isOpen={spotlightOpen}
+        onOpenChange={setSpotlightOpen}
+        items={allM3UItems}
+        categories={categories}
+        onSelectItem={(item) => {
+          setSelectedItem(item)
+          // Also set the category to show in sidebar
+          if (item.groupTitle) {
+            setSelectedCategory(item.groupTitle)
+            setItems(allM3UItems.filter(i => i.groupTitle === item.groupTitle))
+          }
+        }}
+        onSelectCategory={(categoryId) => {
+          handleCategorySelect(categoryId)
+          setSidebarVisible(true)
+        }}
       />
     </div>
   )
