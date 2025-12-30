@@ -3,6 +3,7 @@ import 'plyr/dist/plyr.css';
 import Hls from 'hls.js';
 import { cn } from '@/lib/utils';
 import { Tv } from 'lucide-react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 interface ChannelInfo {
   name: string;
@@ -33,6 +34,7 @@ export function VideoPlayer({
   const hlsRef = useRef<Hls | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [showControls, setShowControls] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Handle mouse movement to show/hide controls
@@ -55,20 +57,19 @@ export function VideoPlayer({
     setShowControls(false);
   }, []);
 
-  // Handle fullscreen
-  const toggleFullscreen = useCallback(() => {
-    if (!containerRef.current) return;
-    
-    if (document.fullscreenElement) {
-      document.exitFullscreen();
-    } else {
-      containerRef.current.requestFullscreen().catch(err => {
-        console.error('Fullscreen error:', err);
-      });
+  // Handle fullscreen using Tauri's window API
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      const appWindow = getCurrentWindow();
+      const currentFullscreen = await appWindow.isFullscreen();
+      await appWindow.setFullscreen(!currentFullscreen);
+      setIsFullscreen(!currentFullscreen);
+    } catch (err) {
+      console.error('Fullscreen error:', err);
     }
   }, []);
 
-  // Listen for 'f' key for fullscreen
+  // Listen for 'f' key for fullscreen and sync fullscreen state
   useEffect(() => {
     const handleKeydown = (e: KeyboardEvent) => {
       if (e.key === 'f' || e.key === 'F') {
@@ -76,8 +77,25 @@ export function VideoPlayer({
       }
     };
     
+    // Sync fullscreen state with Tauri window
+    const syncFullscreenState = async () => {
+      try {
+        const appWindow = getCurrentWindow();
+        const currentFullscreen = await appWindow.isFullscreen();
+        setIsFullscreen(currentFullscreen);
+      } catch (err) {
+        // Ignore errors when not in Tauri context
+      }
+    };
+
+    // Check fullscreen state periodically (handles ESC key and other exits)
+    const interval = setInterval(syncFullscreenState, 500);
+    
     document.addEventListener('keydown', handleKeydown);
-    return () => document.removeEventListener('keydown', handleKeydown);
+    return () => {
+      document.removeEventListener('keydown', handleKeydown);
+      clearInterval(interval);
+    };
   }, [toggleFullscreen]);
 
   // Initialize Plyr
@@ -132,10 +150,30 @@ export function VideoPlayer({
         resetOnEnd: false,
       });
 
-      // Override Plyr's fullscreen to use our container
-      playerRef.current.on('enterfullscreen', () => {
-        if (!document.fullscreenElement && containerRef.current) {
-          containerRef.current.requestFullscreen().catch(() => {});
+      // Override Plyr's fullscreen to use Tauri's window fullscreen
+      playerRef.current.on('enterfullscreen', async () => {
+        try {
+          const appWindow = getCurrentWindow();
+          const currentFullscreen = await appWindow.isFullscreen();
+          if (!currentFullscreen) {
+            await appWindow.setFullscreen(true);
+            setIsFullscreen(true);
+          }
+        } catch (err) {
+          console.error('Enter fullscreen error:', err);
+        }
+      });
+
+      playerRef.current.on('exitfullscreen', async () => {
+        try {
+          const appWindow = getCurrentWindow();
+          const currentFullscreen = await appWindow.isFullscreen();
+          if (currentFullscreen) {
+            await appWindow.setFullscreen(false);
+            setIsFullscreen(false);
+          }
+        } catch (err) {
+          console.error('Exit fullscreen error:', err);
         }
       });
       

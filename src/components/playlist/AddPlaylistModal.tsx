@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
@@ -43,9 +43,10 @@ interface AddPlaylistModalProps {
   isOpen: boolean
   onClose: () => void
   onSuccess: () => void
+  editPlaylist?: Playlist | null
 }
 
-export function AddPlaylistModal({ isOpen, onClose, onSuccess }: AddPlaylistModalProps) {
+export function AddPlaylistModal({ isOpen, onClose, onSuccess, editPlaylist }: AddPlaylistModalProps) {
   const [activeTab, setActiveTab] = useState<'m3u' | 'xtream'>('m3u')
 
   const m3uForm = useForm<z.infer<typeof m3uSchema>>({
@@ -58,22 +59,45 @@ export function AddPlaylistModal({ isOpen, onClose, onSuccess }: AddPlaylistModa
     defaultValues: { name: '', serverUrl: '', username: '', password: '' },
   })
 
+  // Pre-fill form when editing
+  useEffect(() => {
+    if (editPlaylist) {
+      setActiveTab(editPlaylist.type)
+      if (editPlaylist.type === 'm3u') {
+        m3uForm.reset({
+          name: editPlaylist.name,
+          url: editPlaylist.url || '',
+        })
+      } else {
+        xtreamForm.reset({
+          name: editPlaylist.name,
+          serverUrl: editPlaylist.serverUrl || '',
+          username: editPlaylist.username || '',
+          password: editPlaylist.password || '',
+        })
+      }
+    } else {
+      m3uForm.reset({ name: '', url: '' })
+      xtreamForm.reset({ name: '', serverUrl: '', username: '', password: '' })
+    }
+  }, [editPlaylist, isOpen])
+
   const onM3USubmit = (values: z.infer<typeof m3uSchema>) => {
-    const newPlaylist: Playlist = {
-      id: crypto.randomUUID(),
+    const playlist: Playlist = {
+      id: editPlaylist?.id || crypto.randomUUID(),
       name: values.name,
       type: 'm3u',
       url: values.url,
       updatedAt: Date.now(),
     }
-    savePlaylist(newPlaylist)
+    savePlaylist(playlist)
     onSuccess()
     m3uForm.reset()
   }
 
   const onXtreamSubmit = (values: z.infer<typeof xtreamSchema>) => {
-    const newPlaylist: Playlist = {
-      id: crypto.randomUUID(),
+    const playlist: Playlist = {
+      id: editPlaylist?.id || crypto.randomUUID(),
       name: values.name,
       type: 'xtream',
       serverUrl: values.serverUrl,
@@ -81,23 +105,27 @@ export function AddPlaylistModal({ isOpen, onClose, onSuccess }: AddPlaylistModa
       password: values.password,
       updatedAt: Date.now(),
     }
-    savePlaylist(newPlaylist)
+    savePlaylist(playlist)
     onSuccess()
     xtreamForm.reset()
   }
+
+  const isEditing = !!editPlaylist
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>Add Playlist</DialogTitle>
+          <DialogTitle>{isEditing ? 'Edit Playlist' : 'Add Playlist'}</DialogTitle>
         </DialogHeader>
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="m3u">M3U Link</TabsTrigger>
-            <TabsTrigger value="xtream">Xtream Codes</TabsTrigger>
-          </TabsList>
-          <TabsContent value="m3u">
+          {!isEditing && (
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="m3u">M3U Link</TabsTrigger>
+              <TabsTrigger value="xtream">Xtream Codes</TabsTrigger>
+            </TabsList>
+          )}
+          <TabsContent value="m3u" className={isEditing && activeTab === 'm3u' ? 'mt-0' : ''}>
             <Form {...m3uForm}>
               <form onSubmit={m3uForm.handleSubmit(onM3USubmit)} className="space-y-4 py-4">
                 <FormField
@@ -126,11 +154,13 @@ export function AddPlaylistModal({ isOpen, onClose, onSuccess }: AddPlaylistModa
                     </FormItem>
                   )}
                 />
-                <Button type="submit" className="w-full">Save Playlist</Button>
+                <Button type="submit" className="w-full">
+                  {isEditing ? 'Save Changes' : 'Save Playlist'}
+                </Button>
               </form>
             </Form>
           </TabsContent>
-          <TabsContent value="xtream">
+          <TabsContent value="xtream" className={isEditing && activeTab === 'xtream' ? 'mt-0' : ''}>
             <Form {...xtreamForm}>
               <form onSubmit={xtreamForm.handleSubmit(onXtreamSubmit)} className="space-y-4 py-4">
                 <FormField
@@ -185,7 +215,9 @@ export function AddPlaylistModal({ isOpen, onClose, onSuccess }: AddPlaylistModa
                     </FormItem>
                   )}
                 />
-                <Button type="submit" className="w-full">Save Playlist</Button>
+                <Button type="submit" className="w-full">
+                  {isEditing ? 'Save Changes' : 'Save Playlist'}
+                </Button>
               </form>
             </Form>
           </TabsContent>

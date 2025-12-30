@@ -4,16 +4,20 @@ import {
   Tv, 
   Search, 
   ChevronRight, 
-  LayoutGrid,
-  Menu
+  ListVideo,
+  Menu,
+  Plus,
+  Trash2,
+  Pencil
 } from 'lucide-react'
 import { Playlist, PlaylistItem, Category } from '@/types'
-import { getPlaylists } from '@/lib/storage'
+import { getPlaylists, saveLastViewed, deletePlaylist } from '@/lib/storage'
 import { fetchM3UPlaylist, fetchXtreamCategories, fetchXtreamItems } from '@/lib/api/iptv'
 import { Input } from '@/components/ui/input'
 import { VideoPlayer } from '@/components/player/VideoPlayer'
 import { useNavigate } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
+import { AddPlaylistModal } from '@/components/playlist/AddPlaylistModal'
 
 export const Route = createFileRoute('/playlist/$playlistId')({
   component: PlaylistPage,
@@ -29,6 +33,7 @@ function PlaylistPage() {
   const { playlistId } = Route.useParams()
   const navigate = useNavigate()
   const [playlist, setPlaylist] = useState<Playlist | null>(null)
+  const [allPlaylists, setAllPlaylists] = useState<Playlist[]>([])
   const [contentType, setContentType] = useState<'live' | 'movie' | 'series'>('live')
   const [categories, setCategories] = useState<Category[]>([])
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -36,26 +41,43 @@ function PlaylistPage() {
   const [selectedItem, setSelectedItem] = useState<PlaylistItem | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [sidebarVisible, setSidebarVisible] = useState(true)
+  const [playlistMenuVisible, setPlaylistMenuVisible] = useState(false)
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false)
+  const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null)
   const sidebarRef = useRef<HTMLDivElement>(null)
+  const playlistMenuRef = useRef<HTMLDivElement>(null)
 
   // All items for M3U (since M3U usually loads everything at once)
   const [allM3UItems, setAllM3UItems] = useState<PlaylistItem[]>([])
 
-  // Handle click outside sidebar to dismiss it
+  // Handle click outside sidebars to dismiss them
   const handleClickOutside = useCallback((event: MouseEvent) => {
+    // Handle categories sidebar
     if (
       sidebarVisible && 
       sidebarRef.current && 
       !sidebarRef.current.contains(event.target as Node)
     ) {
-      // Check if click is on the menu toggle button
       const menuButton = document.querySelector('[data-menu-toggle]')
       if (menuButton && menuButton.contains(event.target as Node)) {
         return
       }
       setSidebarVisible(false)
     }
-  }, [sidebarVisible])
+    
+    // Handle playlist menu
+    if (
+      playlistMenuVisible && 
+      playlistMenuRef.current && 
+      !playlistMenuRef.current.contains(event.target as Node)
+    ) {
+      const playlistButton = document.querySelector('[data-playlist-toggle]')
+      if (playlistButton && playlistButton.contains(event.target as Node)) {
+        return
+      }
+      setPlaylistMenuVisible(false)
+    }
+  }, [sidebarVisible, playlistMenuVisible])
 
   useEffect(() => {
     document.addEventListener('mousedown', handleClickOutside)
@@ -63,14 +85,32 @@ function PlaylistPage() {
   }, [handleClickOutside])
 
   useEffect(() => {
-    const p = getPlaylists().find((p) => p.id === playlistId)
+    const playlists = getPlaylists()
+    setAllPlaylists(playlists)
+    const p = playlists.find((p) => p.id === playlistId)
     if (p) {
       setPlaylist(p)
       loadInitialData(p)
+      // Save as last viewed
+      saveLastViewed({ playlistId: p.id, contentType })
     } else {
       navigate({ to: '/' })
     }
   }, [playlistId])
+
+  // Save last viewed when channel changes
+  useEffect(() => {
+    if (playlist && selectedItem) {
+      saveLastViewed({
+        playlistId: playlist.id,
+        channelId: selectedItem.id,
+        channelUrl: selectedItem.url,
+        channelName: selectedItem.name,
+        categoryId: selectedCategory || undefined,
+        contentType,
+      })
+    }
+  }, [selectedItem, playlist, selectedCategory, contentType])
 
   const loadInitialData = async (p: Playlist) => {
     try {
@@ -137,6 +177,32 @@ function PlaylistPage() {
     setSearchQuery('')
   }
 
+  const handleSwitchPlaylist = (id: string) => {
+    setPlaylistMenuVisible(false)
+    navigate({ to: '/playlist/$playlistId', params: { playlistId: id } })
+  }
+
+  const handleDeletePlaylist = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    deletePlaylist(id)
+    const updated = getPlaylists()
+    setAllPlaylists(updated)
+    
+    // If we deleted the current playlist, navigate to another or home
+    if (id === playlistId) {
+      if (updated.length > 0) {
+        navigate({ to: '/playlist/$playlistId', params: { playlistId: updated[0].id } })
+      } else {
+        navigate({ to: '/' })
+      }
+    }
+  }
+
+  const handleAddPlaylistSuccess = () => {
+    setIsAddModalOpen(false)
+    setAllPlaylists(getPlaylists())
+  }
+
   const quality = selectedItem ? extractQuality(selectedItem.name) : null
 
   return (
@@ -147,10 +213,13 @@ function PlaylistPage() {
       {/* Apple TV Style Top Navigation */}
       <nav className="flex items-center justify-center py-2 px-4 flex-shrink-0 z-20 relative -mt-8 pt-8">
         <div className="flex items-center gap-1.5 bg-[oklch(0.205_0_0)] rounded-full p-1 border border-[oklch(1_0_0_/_0.1)]">
-          {/* Menu Toggle Icon */}
+          {/* Menu Toggle Icon - Categories/Channels */}
           <button 
             data-menu-toggle
-            onClick={() => setSidebarVisible(!sidebarVisible)}
+            onClick={() => {
+              setSidebarVisible(!sidebarVisible)
+              setPlaylistMenuVisible(false)
+            }}
             className={cn(
               "p-2.5 rounded-full transition-colors",
               sidebarVisible ? "bg-[oklch(0.985_0_0)] text-[oklch(0.145_0_0)]" : "text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0_/_0.1)]"
@@ -159,12 +228,19 @@ function PlaylistPage() {
             <Menu className="h-4 w-4" />
           </button>
           
-          {/* Grid Icon - Home */}
+          {/* Playlist Icon - Playlist Management */}
           <button 
-            onClick={() => navigate({ to: '/' })}
-            className="p-2.5 rounded-full hover:bg-[oklch(1_0_0_/_0.1)] transition-colors text-[oklch(0.985_0_0)]"
+            data-playlist-toggle
+            onClick={() => {
+              setPlaylistMenuVisible(!playlistMenuVisible)
+              setSidebarVisible(false)
+            }}
+            className={cn(
+              "p-2.5 rounded-full transition-colors",
+              playlistMenuVisible ? "bg-[oklch(0.985_0_0)] text-[oklch(0.145_0_0)]" : "text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0_/_0.1)]"
+            )}
           >
-            <LayoutGrid className="h-4 w-4" />
+            <ListVideo className="h-4 w-4" />
           </button>
           
           {/* TV Tab */}
@@ -241,7 +317,7 @@ function PlaylistPage() {
           )}
         </div>
 
-        {/* Left Sidebar - Overlay on top of player */}
+        {/* Left Sidebar - Categories/Channels */}
         {sidebarVisible && (
           <div ref={sidebarRef} className="absolute top-1 left-2 bottom-4 w-[340px] z-10">
             <div className="h-full flex flex-col bg-[oklch(0.145_0_0_/_0.9)] backdrop-blur-xl rounded-2xl border border-[oklch(1_0_0_/_0.1)] overflow-hidden">
@@ -326,7 +402,92 @@ function PlaylistPage() {
             </div>
           </div>
         )}
+
+        {/* Playlist Management Sidebar */}
+        {playlistMenuVisible && (
+          <div ref={playlistMenuRef} className="absolute top-1 left-2 bottom-4 w-[340px] z-10">
+            <div className="h-full flex flex-col bg-[oklch(0.145_0_0_/_0.9)] backdrop-blur-xl rounded-2xl border border-[oklch(1_0_0_/_0.1)] overflow-hidden">
+              {/* Header with Add Button */}
+              <div className="p-3 flex-shrink-0 flex justify-end">
+                <button
+                  onClick={() => {
+                    setEditingPlaylist(null)
+                    setIsAddModalOpen(true)
+                  }}
+                  className="w-9 h-9 flex items-center justify-center bg-[oklch(0.269_0_0)] hover:bg-[oklch(0.3_0_0)] rounded-full text-[oklch(0.985_0_0)] transition-colors"
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+              </div>
+              
+              {/* Playlist List */}
+              <div className="flex-1 overflow-y-auto min-h-0">
+                <div className="px-2 pb-2 space-y-1.5">
+                  {allPlaylists.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => handleSwitchPlaylist(p.id)}
+                      className={cn(
+                        "w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-all text-left group",
+                        p.id === playlistId 
+                          ? "bg-[oklch(0.269_0_0)]" 
+                          : "hover:bg-[oklch(0.269_0_0_/_0.5)]"
+                      )}
+                    >
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[oklch(0.985_0_0)] text-sm truncate">
+                          {p.name}
+                        </p>
+                        <p className="text-[oklch(0.556_0_0)] text-xs mt-0.5">
+                          Updated {new Date(p.updatedAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      
+                      {/* Edit Button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setEditingPlaylist(p)
+                          setIsAddModalOpen(true)
+                        }}
+                        className="p-1.5 rounded-full hover:bg-[oklch(1_0_0_/_0.1)] text-[oklch(0.985_0_0)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      
+                      {/* Delete Button */}
+                      <button
+                        onClick={(e) => handleDeletePlaylist(e, p.id)}
+                        className="p-1.5 rounded-full hover:bg-[oklch(1_0_0_/_0.1)] text-[oklch(0.985_0_0)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </button>
+                  ))}
+                  
+                  {allPlaylists.length === 0 && (
+                    <div className="text-center py-8">
+                      <p className="text-[oklch(0.556_0_0)] text-sm">No playlists yet</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Add/Edit Playlist Modal */}
+      <AddPlaylistModal 
+        isOpen={isAddModalOpen} 
+        onClose={() => {
+          setIsAddModalOpen(false)
+          setEditingPlaylist(null)
+        }} 
+        onSuccess={handleAddPlaylistSuccess}
+        editPlaylist={editingPlaylist}
+      />
     </div>
   )
 }
