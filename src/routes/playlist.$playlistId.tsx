@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from 'react'
-import { motion } from 'motion/react'
+import { motion, AnimatePresence } from 'motion/react'
 import { 
   Tv, 
   Search, 
@@ -17,13 +17,12 @@ import {
   Download,
   HardDrive,
   Film,
-  CheckCircle2,
-  X
+  CheckCircle2
 } from 'lucide-react'
 import { PieProgress } from '@/components/ui/download-toast'
 import { toast } from 'sonner'
 import { Playlist, PlaylistItem, Category } from '@/types'
-import { getPlaylists, saveLastViewed, deletePlaylist, getOfflineItems, saveOfflineItem, deleteOfflineItem, isItemDownloaded, OfflineItem } from '@/lib/storage'
+import { getPlaylists, saveLastViewed, getLastViewedAsync, deletePlaylist, getOfflineItems, saveOfflineItem, deleteOfflineItem, isItemDownloaded, OfflineItem } from '@/lib/storage'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { 
@@ -32,8 +31,7 @@ import {
   fetchXtreamItems, 
   isPlaylistCached, 
   fetchAndCacheXtreamPlaylist,
-  getContentAvailability,
-  searchCachedChannels
+  getContentAvailability
 } from '@/lib/api/iptv'
 import { Input } from '@/components/ui/input'
 import { VideoPlayer } from '@/components/player/video-player'
@@ -90,8 +88,6 @@ function PlaylistPage() {
   
   const sidebarRef = useRef<HTMLDivElement>(null)
   const playlistMenuRef = useRef<HTMLDivElement>(null)
-  const [sidebarClosing, setSidebarClosing] = useState(false)
-  const [playlistMenuClosing, setPlaylistMenuClosing] = useState(false)
 
   // All items for M3U (since M3U usually loads everything at once)
   const [allM3UItems, setAllM3UItems] = useState<PlaylistItem[]>([])
@@ -102,22 +98,14 @@ function PlaylistPage() {
   const [downloadingIds, setDownloadingIds] = useState<Set<string>>(new Set())
   const downloadToastIds = useRef<Record<string, string | number>>({}) // Maps item id to toast id
 
-  // Close sidebar with animation
+  // Close sidebar
   const closeSidebar = useCallback(() => {
-    setSidebarClosing(true)
-    setTimeout(() => {
-      setSidebarVisible(false)
-      setSidebarClosing(false)
-    }, 300)
+    setSidebarVisible(false)
   }, [])
 
-  // Close playlist menu with animation
+  // Close playlist menu
   const closePlaylistMenu = useCallback(() => {
-    setPlaylistMenuClosing(true)
-    setTimeout(() => {
-      setPlaylistMenuVisible(false)
-      setPlaylistMenuClosing(false)
-    }, 300)
+    setPlaylistMenuVisible(false)
   }, [])
 
   // Handle click outside sidebars to dismiss them
@@ -125,7 +113,6 @@ function PlaylistPage() {
     // Handle categories sidebar
     if (
       sidebarVisible && 
-      !sidebarClosing &&
       sidebarRef.current && 
       !sidebarRef.current.contains(event.target as Node)
     ) {
@@ -139,7 +126,6 @@ function PlaylistPage() {
     // Handle playlist menu
     if (
       playlistMenuVisible && 
-      !playlistMenuClosing &&
       playlistMenuRef.current && 
       !playlistMenuRef.current.contains(event.target as Node)
     ) {
@@ -149,7 +135,7 @@ function PlaylistPage() {
       }
       closePlaylistMenu()
     }
-  }, [sidebarVisible, playlistMenuVisible, sidebarClosing, playlistMenuClosing, closeSidebar, closePlaylistMenu])
+  }, [sidebarVisible, playlistMenuVisible, closeSidebar, closePlaylistMenu])
 
   useEffect(() => {
     document.addEventListener('mousedown', handleClickOutside)
@@ -348,17 +334,34 @@ function PlaylistPage() {
   }, [])
 
   useEffect(() => {
-    const playlists = getPlaylists()
-    setAllPlaylists(playlists)
-    const p = playlists.find((p) => p.id === playlistId)
-    if (p) {
-      setPlaylist(p)
-      loadInitialData(p)
-      // Save as last viewed
-      saveLastViewed({ playlistId: p.id, contentType })
-    } else {
-      navigate({ to: '/' })
+    const initPlaylist = async () => {
+      const playlists = getPlaylists()
+      setAllPlaylists(playlists)
+      const p = playlists.find((p) => p.id === playlistId)
+      if (p) {
+        setPlaylist(p)
+        
+        // Check for last viewed state from database
+        const lastViewed = await getLastViewedAsync()
+        if (lastViewed && lastViewed.playlistId === p.id) {
+          // Restore content type if it was saved
+          if (lastViewed.contentType) {
+            setContentType(lastViewed.contentType)
+            setActiveTab(lastViewed.contentType)
+          }
+          // We'll restore category and channel after loading data
+        }
+        
+        await loadInitialData(p, lastViewed?.categoryId, lastViewed?.channelId)
+        
+        // Save as last viewed
+        saveLastViewed({ playlistId: p.id, contentType })
+      } else {
+        navigate({ to: '/' })
+      }
     }
+    
+    initPlaylist()
   }, [playlistId])
 
   // Save last viewed when channel changes
@@ -375,7 +378,7 @@ function PlaylistPage() {
     }
   }, [selectedItem, playlist, selectedCategory, contentType])
 
-  const loadInitialData = async (p: Playlist) => {
+  const loadInitialData = async (p: Playlist, lastCategoryId?: string, lastChannelId?: string) => {
     setIsLoading(true)
     setLoadError(null)
     try {
@@ -394,7 +397,27 @@ function PlaylistPage() {
         
         // Extract categories from M3U
         const uniqueCategories = Array.from(new Set(allItems.map(i => i.groupTitle).filter(Boolean)))
-        setCategories(uniqueCategories.map(name => ({ id: name!, name: name!, type: 'live' })))
+        const cats = uniqueCategories.map(name => ({ id: name!, name: name!, type: 'live' as const }))
+        setCategories(cats)
+        
+        // Restore last category or select first
+        const categoryToSelect = lastCategoryId && cats.some(c => c.id === lastCategoryId) 
+          ? lastCategoryId 
+          : cats[0]?.id
+        
+        if (categoryToSelect) {
+          setSelectedCategory(categoryToSelect)
+          const filtered = allItems.filter(i => i.groupTitle === categoryToSelect)
+          setItems(filtered)
+          
+          // Restore last channel if available
+          if (lastChannelId) {
+            const lastChannel = filtered.find(i => i.id === lastChannelId)
+            if (lastChannel) {
+              setSelectedItem(lastChannel)
+            }
+          }
+        }
       } else if (p.type === 'xtream') {
         // Check if data is already cached
         const isCached = await isPlaylistCached(p.id)
@@ -409,8 +432,26 @@ function PlaylistPage() {
           // Load categories from cache
           const cats = await fetchXtreamCategories(p, contentType)
           setCategories(cats)
-          if (cats.length > 0) {
-            handleCategorySelect(cats[0].id)
+          
+          // Restore last category or select first
+          const categoryToSelect = lastCategoryId && cats.some(c => c.id === lastCategoryId) 
+            ? lastCategoryId 
+            : cats[0]?.id
+          
+          if (categoryToSelect) {
+            setSelectedCategory(categoryToSelect)
+            setSidebarLoading(true)
+            const fetchedItems = await fetchXtreamItems(p, contentType, categoryToSelect)
+            setItems(fetchedItems)
+            setSidebarLoading(false)
+            
+            // Restore last channel if available
+            if (lastChannelId) {
+              const lastChannel = fetchedItems.find(i => i.id === lastChannelId)
+              if (lastChannel) {
+                setSelectedItem(lastChannel)
+              }
+            }
           }
         } else {
           console.log('Fetching and caching playlist data...')
@@ -579,7 +620,12 @@ function PlaylistPage() {
       <div data-tauri-drag-region className="h-8 flex-shrink-0 w-full select-none cursor-default" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
       
       {/* Apple TV Style Top Navigation */}
-      <nav className="flex items-center justify-center py-3 px-6 flex-shrink-0 z-20 relative -mt-8 pt-8 animate-slide-down">
+      <motion.nav 
+        initial={{ y: -50, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ type: "spring", stiffness: 300, damping: 25, delay: 0.1 }}
+        className="flex items-center justify-center py-3 px-6 flex-shrink-0 z-20 relative -mt-8 pt-8"
+      >
         <div className="flex items-center gap-3 bg-[oklch(0.18_0_0)] rounded-full px-2 py-1.5 border border-[oklch(1_0_0_/_0.08)] shadow-xl shadow-black/30">
           {/* Menu Toggle Icon - Categories/Channels */}
           <div 
@@ -739,23 +785,31 @@ function PlaylistPage() {
             <Search className="h-5 w-5" />
           </div>
         </div>
-      </nav>
+      </motion.nav>
 
       {/* Unavailable Content Message */}
-      {unavailableMessage && (
-        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-50 animate-slide-down">
-          <div className="bg-[oklch(0.205_0_0)] border border-[oklch(1_0_0_/_0.1)] rounded-xl px-5 py-3 shadow-xl backdrop-blur-xl flex items-center gap-3">
-            <AlertCircle className="h-4 w-4 text-[oklch(0.708_0_0)]" />
-            <span className="text-[oklch(0.985_0_0)] text-sm">{unavailableMessage}</span>
-            <button 
-              onClick={() => setUnavailableMessage(null)}
-              className="ml-2 text-[oklch(0.556_0_0)] hover:text-[oklch(0.985_0_0)] transition-colors"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
+      <AnimatePresence>
+        {unavailableMessage && (
+          <motion.div 
+            initial={{ y: -20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -20, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 500, damping: 30 }}
+            className="absolute top-24 left-1/2 -translate-x-1/2 z-50"
+          >
+            <div className="bg-[oklch(0.205_0_0)] border border-[oklch(1_0_0_/_0.1)] rounded-xl px-5 py-3 shadow-xl backdrop-blur-xl flex items-center gap-3">
+              <AlertCircle className="h-4 w-4 text-[oklch(0.708_0_0)]" />
+              <span className="text-[oklch(0.985_0_0)] text-sm">{unavailableMessage}</span>
+              <button 
+                onClick={() => setUnavailableMessage(null)}
+                className="ml-2 text-[oklch(0.556_0_0)] hover:text-[oklch(0.985_0_0)] transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Main Content Area - Relative container for overlay */}
       <div className="flex-1 relative overflow-hidden px-4 pb-4 pt-1">
@@ -809,15 +863,17 @@ function PlaylistPage() {
         </div>
 
         {/* Left Sidebar - Categories/Channels */}
-        {sidebarVisible && (
-          <div 
-            ref={sidebarRef} 
-            className={cn(
-              "absolute top-1 left-2 bottom-4 w-[380px] z-30",
-              sidebarClosing ? "animate-slide-out-left" : "animate-slide-in-left"
-            )}
-          >
-            <div className="h-full flex flex-col bg-[oklch(0.145_0_0_/_0.9)] backdrop-blur-xl rounded-2xl border border-[oklch(1_0_0_/_0.1)] overflow-hidden">
+        <AnimatePresence>
+          {sidebarVisible && (
+            <motion.div 
+              ref={sidebarRef} 
+              initial={{ x: -380, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: -380, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 400, damping: 30 }}
+              className="absolute top-1 left-2 bottom-4 w-[380px] z-30"
+            >
+              <div className="h-full flex flex-col bg-[oklch(0.145_0_0_/_0.9)] backdrop-blur-xl rounded-2xl border border-[oklch(1_0_0_/_0.1)] overflow-hidden">
               {/* Search Box */}
               <div className="p-3 flex-shrink-0">
                 <div className="relative">
@@ -1019,19 +1075,22 @@ function PlaylistPage() {
                 )}
               </div>
             </div>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
 
         {/* Playlist Management Sidebar */}
-        {playlistMenuVisible && (
-          <div 
-            ref={playlistMenuRef} 
-            className={cn(
-              "absolute top-1 left-2 bottom-4 w-[380px] z-30",
-              playlistMenuClosing ? "animate-slide-out-left" : "animate-slide-in-left"
-            )}
-          >
-            <div className="h-full flex flex-col bg-[oklch(0.145_0_0_/_0.9)] backdrop-blur-xl rounded-2xl border border-[oklch(1_0_0_/_0.1)] overflow-hidden">
+        <AnimatePresence>
+          {playlistMenuVisible && (
+            <motion.div 
+              ref={playlistMenuRef} 
+              initial={{ x: -380, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: -380, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 400, damping: 30 }}
+              className="absolute top-1 left-2 bottom-4 w-[380px] z-30"
+            >
+              <div className="h-full flex flex-col bg-[oklch(0.145_0_0_/_0.9)] backdrop-blur-xl rounded-2xl border border-[oklch(1_0_0_/_0.1)] overflow-hidden">
               {/* Header with Add Button */}
               <div className="p-3 flex-shrink-0 flex justify-end">
                 <button
@@ -1105,15 +1164,20 @@ function PlaylistPage() {
                   ))}
                   
                   {allPlaylists.length === 0 && (
-                    <div className="text-center py-8 animate-scale-in">
+                    <motion.div 
+                      initial={{ scale: 0.95, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      className="text-center py-8"
+                    >
                       <p className="text-[oklch(0.556_0_0)] text-sm">No playlists yet</p>
-                    </div>
+                    </motion.div>
                   )}
                 </div>
               </div>
             </div>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
 
       {/* Add/Edit Playlist Modal */}

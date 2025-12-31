@@ -604,7 +604,7 @@ export function VideoPlayer({
                       videoRef.current.load();
                       if (autoplay) videoRef.current.play().catch(() => {});
                     }
-                  }}
+                  }} 
                   className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-[oklch(0.269_0_0)] hover:bg-[oklch(0.3_0_0)] text-white text-sm transition-colors"
                 >
                   <RefreshCw className="h-4 w-4" />

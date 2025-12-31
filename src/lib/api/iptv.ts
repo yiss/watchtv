@@ -2,6 +2,63 @@ import { fetch } from '@tauri-apps/plugin-http';
 import { invoke } from '@tauri-apps/api/core';
 import { Playlist, PlaylistItem, Category } from '@/types';
 
+// Last viewed state interface
+export interface LastViewedState {
+  playlist_id: string;
+  channel_id: string | null;
+  category_id: string | null;
+  content_type: string;
+}
+
+// Save last viewed state to database
+export const saveLastViewedState = async (
+  playlistId: string,
+  channelId: string | null,
+  categoryId: string | null,
+  contentType: string
+): Promise<void> => {
+  try {
+    await invoke('save_last_viewed_state', {
+      playlistId,
+      channelId,
+      categoryId,
+      contentType,
+    });
+  } catch (error) {
+    console.error('Error saving last viewed state:', error);
+  }
+};
+
+// Get last viewed state from database
+export const getLastViewedState = async (): Promise<LastViewedState | null> => {
+  try {
+    return await invoke<LastViewedState | null>('get_last_viewed_state');
+  } catch (error) {
+    console.error('Error getting last viewed state:', error);
+    return null;
+  }
+};
+
+// Check if a URL needs transcoding
+export const needsTranscoding = async (url: string): Promise<boolean> => {
+  try {
+    return await invoke<boolean>('needs_transcoding', { url });
+  } catch (error) {
+    console.error('Error checking if transcoding needed:', error);
+    return false;
+  }
+};
+
+// Start transcoding
+export const startTranscode = async (sourcePath: string): Promise<string> => {
+  return await invoke<string>('start_transcode', { sourcePath });
+};
+
+// Stop transcoding
+export const stopTranscode = async (): Promise<void> => {
+  await invoke('stop_transcode');
+};
+
 interface RustPlaylistItem {
   id: string;
   name: string;

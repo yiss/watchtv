@@ -1,4 +1,5 @@
 import { Playlist } from "@/types";
+import { invoke } from "@tauri-apps/api/core";
 
 const PLAYLISTS_KEY = "watchtv_playlists";
 const LAST_VIEWED_KEY = "watchtv_last_viewed";
@@ -25,6 +26,7 @@ export interface LastViewed {
   contentType?: 'live' | 'movie' | 'series';
 }
 
+// Sync version for quick checks (uses localStorage as cache)
 export const getLastViewed = (): LastViewed | null => {
   const data = localStorage.getItem(LAST_VIEWED_KEY);
   if (!data) return null;
@@ -35,8 +37,48 @@ export const getLastViewed = (): LastViewed | null => {
   }
 };
 
+// Async version that also saves to database
+export const getLastViewedAsync = async (): Promise<LastViewed | null> => {
+  try {
+    const dbState = await invoke<{
+      playlist_id: string;
+      channel_id: string | null;
+      category_id: string | null;
+      content_type: string;
+    } | null>('get_last_viewed_state');
+    
+    if (dbState) {
+      // Also update localStorage as cache
+      const lastViewed: LastViewed = {
+        playlistId: dbState.playlist_id,
+        channelId: dbState.channel_id || undefined,
+        categoryId: dbState.category_id || undefined,
+        contentType: dbState.content_type as 'live' | 'movie' | 'series',
+      };
+      localStorage.setItem(LAST_VIEWED_KEY, JSON.stringify(lastViewed));
+      return lastViewed;
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting last viewed from DB:', error);
+    // Fall back to localStorage
+    return getLastViewed();
+  }
+};
+
 export const saveLastViewed = (lastViewed: LastViewed) => {
+  // Save to localStorage for quick access
   localStorage.setItem(LAST_VIEWED_KEY, JSON.stringify(lastViewed));
+  
+  // Also save to database for persistence across app restarts
+  invoke('save_last_viewed_state', {
+    playlistId: lastViewed.playlistId,
+    channelId: lastViewed.channelId || null,
+    categoryId: lastViewed.categoryId || null,
+    contentType: lastViewed.contentType || 'live',
+  }).catch((error) => {
+    console.error('Error saving last viewed to DB:', error);
+  });
 };
 
 export const clearLastViewed = () => {
