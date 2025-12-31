@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from 'react'
+import { motion } from 'motion/react'
 import { 
   Tv, 
   Search, 
@@ -11,17 +12,41 @@ import {
   Pencil,
   Loader2,
   AlertCircle,
-  RefreshCw
+  RefreshCw,
+  MoreVertical,
+  Download,
+  HardDrive,
+  Film,
+  CheckCircle2,
+  X
 } from 'lucide-react'
+import { PieProgress } from '@/components/ui/download-toast'
+import { toast } from 'sonner'
 import { Playlist, PlaylistItem, Category } from '@/types'
-import { getPlaylists, saveLastViewed, deletePlaylist } from '@/lib/storage'
-import { fetchM3UPlaylist, fetchXtreamCategories, fetchXtreamItems } from '@/lib/api/iptv'
+import { getPlaylists, saveLastViewed, deletePlaylist, getOfflineItems, saveOfflineItem, deleteOfflineItem, isItemDownloaded, OfflineItem } from '@/lib/storage'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+import { 
+  fetchM3UPlaylist, 
+  fetchXtreamCategories, 
+  fetchXtreamItems, 
+  isPlaylistCached, 
+  fetchAndCacheXtreamPlaylist,
+  getContentAvailability,
+  searchCachedChannels
+} from '@/lib/api/iptv'
 import { Input } from '@/components/ui/input'
-import { VideoPlayer } from '@/components/player/VideoPlayer'
+import { VideoPlayer } from '@/components/player/video-player'
 import { useNavigate } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
-import { AddPlaylistModal } from '@/components/playlist/AddPlaylistModal'
-import { SpotlightSearch } from '@/components/search/SpotlightSearch'
+import { AddPlaylistModal } from '@/components/playlist/add-playlist-modal'
+import { SpotlightSearch } from '@/components/search/spotlight-search'
+import { 
+  DropdownMenu, 
+  DropdownMenuTrigger, 
+  DropdownMenuContent, 
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu'
 
 export const Route = createFileRoute('/playlist/$playlistId')({
   component: PlaylistPage,
@@ -49,19 +74,58 @@ function PlaylistPage() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [sidebarLoading, setSidebarLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [spotlightOpen, setSpotlightOpen] = useState(false)
+  const [hasMovies, setHasMovies] = useState(false)
+  const [hasSeries, setHasSeries] = useState(false)
+  const [hasOffline, setHasOffline] = useState(false)
+  const [unavailableMessage, setUnavailableMessage] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'live' | 'movie' | 'series' | 'offline'>('live')
+  
+  // Tab refs for dynamic indicator positioning
+  const tabsContainerRef = useRef<HTMLDivElement>(null)
+  const tabRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0 })
+  
   const sidebarRef = useRef<HTMLDivElement>(null)
   const playlistMenuRef = useRef<HTMLDivElement>(null)
+  const [sidebarClosing, setSidebarClosing] = useState(false)
+  const [playlistMenuClosing, setPlaylistMenuClosing] = useState(false)
 
   // All items for M3U (since M3U usually loads everything at once)
   const [allM3UItems, setAllM3UItems] = useState<PlaylistItem[]>([])
+
+  // Offline/Download state
+  const [offlineItems, setOfflineItems] = useState<OfflineItem[]>([])
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({})
+  const [downloadingIds, setDownloadingIds] = useState<Set<string>>(new Set())
+  const downloadToastIds = useRef<Record<string, string | number>>({}) // Maps item id to toast id
+
+  // Close sidebar with animation
+  const closeSidebar = useCallback(() => {
+    setSidebarClosing(true)
+    setTimeout(() => {
+      setSidebarVisible(false)
+      setSidebarClosing(false)
+    }, 300)
+  }, [])
+
+  // Close playlist menu with animation
+  const closePlaylistMenu = useCallback(() => {
+    setPlaylistMenuClosing(true)
+    setTimeout(() => {
+      setPlaylistMenuVisible(false)
+      setPlaylistMenuClosing(false)
+    }, 300)
+  }, [])
 
   // Handle click outside sidebars to dismiss them
   const handleClickOutside = useCallback((event: MouseEvent) => {
     // Handle categories sidebar
     if (
       sidebarVisible && 
+      !sidebarClosing &&
       sidebarRef.current && 
       !sidebarRef.current.contains(event.target as Node)
     ) {
@@ -69,12 +133,13 @@ function PlaylistPage() {
       if (menuButton && menuButton.contains(event.target as Node)) {
         return
       }
-      setSidebarVisible(false)
+      closeSidebar()
     }
     
     // Handle playlist menu
     if (
       playlistMenuVisible && 
+      !playlistMenuClosing &&
       playlistMenuRef.current && 
       !playlistMenuRef.current.contains(event.target as Node)
     ) {
@@ -82,14 +147,205 @@ function PlaylistPage() {
       if (playlistButton && playlistButton.contains(event.target as Node)) {
         return
       }
-      setPlaylistMenuVisible(false)
+      closePlaylistMenu()
     }
-  }, [sidebarVisible, playlistMenuVisible])
+  }, [sidebarVisible, playlistMenuVisible, sidebarClosing, playlistMenuClosing, closeSidebar, closePlaylistMenu])
 
   useEffect(() => {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [handleClickOutside])
+
+  // Auto-dismiss unavailable message after 3 seconds
+  useEffect(() => {
+    if (unavailableMessage) {
+      const timer = setTimeout(() => {
+        setUnavailableMessage(null)
+      }, 3000)
+      return () => clearTimeout(timer)
+    }
+  }, [unavailableMessage])
+
+  // Load offline items and check if any exist
+  useEffect(() => {
+    const items = getOfflineItems()
+    setOfflineItems(items)
+    setHasOffline(items.length > 0)
+  }, [])
+
+  // Update tab indicator position when active tab changes
+  useLayoutEffect(() => {
+    const activeTabEl = tabRefs.current[activeTab]
+    const container = tabsContainerRef.current
+    if (activeTabEl && container) {
+      const containerRect = container.getBoundingClientRect()
+      const tabRect = activeTabEl.getBoundingClientRect()
+      setTabIndicator({
+        left: tabRect.left - containerRect.left,
+        width: tabRect.width,
+      })
+    }
+  }, [activeTab])
+
+  // Format bytes helper
+  const formatBytes = useCallback((bytes: number): string => {
+    if (bytes === 0) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+  }, [])
+
+  // Listen for download progress events
+  useEffect(() => {
+    const unlisten = listen<{ 
+      id: string
+      progress: number
+      status: string
+      downloaded_bytes: number
+      total_bytes: number | null
+      speed: number | null
+    }>('download-progress', (event) => {
+      const { id, progress, status, downloaded_bytes, total_bytes, speed } = event.payload
+      
+      if (status === 'completed') {
+        setDownloadingIds(prev => {
+          const next = new Set(prev)
+          next.delete(id)
+          return next
+        })
+        setDownloadProgress(prev => {
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+        // Dismiss loading toast and show success
+        if (downloadToastIds.current[id]) {
+          toast.dismiss(downloadToastIds.current[id])
+          delete downloadToastIds.current[id]
+        }
+        toast.success('Download complete', {
+          description: `${formatBytes(downloaded_bytes)} saved to offline`,
+        })
+        // Refresh offline items
+        const items = getOfflineItems()
+        setOfflineItems(items)
+        setHasOffline(items.length > 0)
+      } else if (status === 'error' || status === 'cancelled') {
+        setDownloadingIds(prev => {
+          const next = new Set(prev)
+          next.delete(id)
+          return next
+        })
+        setDownloadProgress(prev => {
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+        // Dismiss toast
+        if (downloadToastIds.current[id]) {
+          toast.dismiss(downloadToastIds.current[id])
+          delete downloadToastIds.current[id]
+        }
+        if (status === 'error') {
+          toast.error('Download failed')
+        }
+      } else {
+        setDownloadProgress(prev => ({ ...prev, [id]: progress }))
+        // Update toast with progress
+        const speedStr = speed ? ` • ${formatBytes(speed)}/s` : ''
+        const sizeStr = total_bytes ? `${formatBytes(downloaded_bytes)} / ${formatBytes(total_bytes)}` : formatBytes(downloaded_bytes)
+        if (downloadToastIds.current[id]) {
+          toast.loading(`Downloading... ${Math.round(progress * 100)}%`, {
+            id: downloadToastIds.current[id],
+            description: `${sizeStr}${speedStr}`,
+          })
+        }
+      }
+    })
+
+    return () => {
+      unlisten.then(fn => fn())
+    }
+  }, [formatBytes])
+
+  // Download a video
+  const handleDownload = useCallback(async (item: PlaylistItem) => {
+    if (downloadingIds.has(item.id)) return
+    
+    setDownloadingIds(prev => new Set(prev).add(item.id))
+    setDownloadProgress(prev => ({ ...prev, [item.id]: 0 }))
+    
+    // Show toast notification
+    const toastId = toast.loading(`Downloading ${item.name}...`, {
+      description: 'Starting download...',
+    })
+    downloadToastIds.current[item.id] = toastId
+    
+    try {
+      const result = await invoke<{
+        id: string
+        name: string
+        local_path: string
+        original_url: string
+        thumbnail: string | null
+        downloaded_at: number
+        size: number | null
+      }>('download_video', {
+        id: item.id,
+        url: item.url,
+        name: item.name,
+        thumbnail: item.tvgLogo || null,
+      })
+      
+      // Save to local storage
+      saveOfflineItem({
+        id: result.id,
+        name: result.name,
+        type: contentType === 'movie' ? 'movie' : 'series',
+        localPath: result.local_path,
+        originalUrl: result.original_url,
+        thumbnail: result.thumbnail || undefined,
+        downloadedAt: result.downloaded_at * 1000,
+        size: result.size || undefined,
+      })
+      
+      // Refresh offline items
+      const items = getOfflineItems()
+      setOfflineItems(items)
+      setHasOffline(true)
+    } catch (error) {
+      console.error('Download failed:', error)
+      setUnavailableMessage(`Download failed: ${error}`)
+    }
+  }, [downloadingIds, contentType])
+
+  // Cancel a download
+  const handleCancelDownload = useCallback(async (id: string) => {
+    try {
+      await invoke('cancel_download', { id })
+    } catch (error) {
+      console.error('Cancel failed:', error)
+    }
+  }, [])
+
+  // Delete a downloaded item
+  const handleDeleteOfflineItem = useCallback(async (item: OfflineItem) => {
+    try {
+      await invoke('delete_download', { path: item.localPath })
+      deleteOfflineItem(item.id)
+      const items = getOfflineItems()
+      setOfflineItems(items)
+      setHasOffline(items.length > 0)
+    } catch (error) {
+      console.error('Delete failed:', error)
+      // Still remove from storage even if file deletion fails
+      deleteOfflineItem(item.id)
+      const items = getOfflineItems()
+      setOfflineItems(items)
+      setHasOffline(items.length > 0)
+    }
+  }, [])
 
   useEffect(() => {
     const playlists = getPlaylists()
@@ -124,6 +380,10 @@ function PlaylistPage() {
     setLoadError(null)
     try {
       if (p.type === 'm3u' && p.url) {
+        // M3U playlists only have live TV
+        setHasMovies(false)
+        setHasSeries(false)
+        
         const allItems = await fetchM3UPlaylist(p.url)
         setAllM3UItems(allItems)
         
@@ -136,10 +396,45 @@ function PlaylistPage() {
         const uniqueCategories = Array.from(new Set(allItems.map(i => i.groupTitle).filter(Boolean)))
         setCategories(uniqueCategories.map(name => ({ id: name!, name: name!, type: 'live' })))
       } else if (p.type === 'xtream') {
-        const cats = await fetchXtreamCategories(p, contentType)
-        setCategories(cats)
-        if (cats.length > 0) {
-          handleCategorySelect(cats[0].id)
+        // Check if data is already cached
+        const isCached = await isPlaylistCached(p.id)
+        
+        if (isCached) {
+          console.log('Using cached playlist data')
+          // Get content availability from cache
+          const availability = await getContentAvailability(p.id)
+          setHasMovies(availability.movie)
+          setHasSeries(availability.series)
+          
+          // Load categories from cache
+          const cats = await fetchXtreamCategories(p, contentType)
+          setCategories(cats)
+          if (cats.length > 0) {
+            handleCategorySelect(cats[0].id)
+          }
+        } else {
+          console.log('Fetching and caching playlist data...')
+          // Fetch and cache all data in background
+          fetchAndCacheXtreamPlaylist(p).catch(err => {
+            console.error('Background cache failed:', err)
+          })
+          
+          // Meanwhile, fetch just what we need
+          const [liveCats, movieCats, seriesCats] = await Promise.all([
+            fetchXtreamCategories(p, 'live', false).catch(() => []),
+            fetchXtreamCategories(p, 'movie', false).catch(() => []),
+            fetchXtreamCategories(p, 'series', false).catch(() => []),
+          ])
+          
+          setHasMovies(movieCats.length > 0)
+          setHasSeries(seriesCats.length > 0)
+          
+          // Load the current content type's categories
+          const cats = contentType === 'live' ? liveCats : contentType === 'movie' ? movieCats : seriesCats
+          setCategories(cats)
+          if (cats.length > 0) {
+            handleCategorySelect(cats[0].id)
+          }
         }
       }
     } catch (error) {
@@ -150,16 +445,55 @@ function PlaylistPage() {
     }
   }
 
+  // Handle tab change with animation
+  const handleTabChange = useCallback((newType: 'live' | 'movie' | 'series' | 'offline') => {
+    if (newType === activeTab) return
+    
+    // Check availability
+    if (newType === 'movie' && !hasMovies) {
+      setUnavailableMessage('This playlist does not contain movies')
+      return
+    }
+    if (newType === 'series' && !hasSeries) {
+      setUnavailableMessage('This playlist does not contain series')
+      return
+    }
+    if (newType === 'offline' && !hasOffline) {
+      setUnavailableMessage('No offline content available. Download movies or series first.')
+      return
+    }
+    
+    // Reset playback when switching tabs
+    setSelectedItem(null)
+    setActiveTab(newType)
+    
+    // For offline tab, don't change contentType
+    if (newType !== 'offline') {
+      // Small delay for animation
+      setTimeout(() => {
+        setContentType(newType)
+      }, 50)
+    }
+  }, [activeTab, hasMovies, hasSeries, hasOffline])
+
   // Reload categories when content type changes for Xtream
   useEffect(() => {
     if (playlist?.type === 'xtream') {
-        fetchXtreamCategories(playlist, contentType).then(cats => {
-            setCategories(cats)
-            setItems([])
-            setSelectedCategory(null)
+      setSidebarLoading(true)
+      fetchXtreamCategories(playlist, contentType)
+        .then(cats => {
+          setCategories(cats)
+          setItems([])
+          setSelectedCategory(null)
+        })
+        .catch(err => {
+          console.error('Failed to fetch categories:', err)
+        })
+        .finally(() => {
+          setSidebarLoading(false)
         })
     }
-  }, [contentType])
+  }, [contentType, playlist])
 
   const handleCategorySelect = async (categoryId: string) => {
     setSelectedCategory(categoryId)
@@ -168,10 +502,13 @@ function PlaylistPage() {
       setItems(filtered)
     } else if (playlist?.type === 'xtream') {
       try {
+        setSidebarLoading(true)
         const fetchedItems = await fetchXtreamItems(playlist, contentType, categoryId)
         setItems(fetchedItems)
       } catch (error) {
         console.error('Failed to fetch items', error)
+      } finally {
+        setSidebarLoading(false)
       }
     }
   }
@@ -195,7 +532,21 @@ function PlaylistPage() {
   }
 
   const handleSwitchPlaylist = (id: string) => {
-    setPlaylistMenuVisible(false)
+    // Reset all state when switching playlists
+    setSelectedItem(null)
+    setSelectedCategory(null)
+    setItems([])
+    setCategories([])
+    setAllM3UItems([])
+    setContentType('live')
+    setSearchQuery('')
+    setHasMovies(false)
+    setHasSeries(false)
+    // hasOffline is managed separately based on downloaded items
+    setUnavailableMessage(null)
+    setLoadError(null)
+    
+    closePlaylistMenu()
     navigate({ to: '/playlist/$playlistId', params: { playlistId: id } })
   }
 
@@ -225,95 +576,191 @@ function PlaylistPage() {
   return (
     <div className="flex flex-col h-screen w-full bg-[oklch(0.145_0_0)] overflow-hidden">
       {/* Draggable title bar region for macOS */}
-      <div data-tauri-drag-region className="h-8 flex-shrink-0 w-full" />
+      <div data-tauri-drag-region className="h-8 flex-shrink-0 w-full select-none cursor-default" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
       
       {/* Apple TV Style Top Navigation */}
-      <nav className="flex items-center justify-center py-2 px-4 flex-shrink-0 z-20 relative -mt-8 pt-8">
-        <div className="flex items-center gap-1.5 bg-[oklch(0.205_0_0)] rounded-full p-1 border border-[oklch(1_0_0_/_0.1)]">
+      <nav className="flex items-center justify-center py-3 px-6 flex-shrink-0 z-20 relative -mt-8 pt-8 animate-slide-down">
+        <div className="flex items-center gap-3 bg-[oklch(0.18_0_0)] rounded-full px-2 py-1.5 border border-[oklch(1_0_0_/_0.08)] shadow-xl shadow-black/30">
           {/* Menu Toggle Icon - Categories/Channels */}
-          <button 
+          <div 
+            role="button"
+            tabIndex={0}
             data-menu-toggle
             onClick={() => {
-              setSidebarVisible(!sidebarVisible)
-              setPlaylistMenuVisible(false)
+              if (sidebarVisible) {
+                closeSidebar()
+              } else {
+                setSidebarVisible(true)
+                if (playlistMenuVisible) closePlaylistMenu()
+              }
             }}
+            onKeyDown={(e) => e.key === 'Enter' && (sidebarVisible ? closeSidebar() : setSidebarVisible(true))}
             className={cn(
-              "p-2.5 rounded-full transition-colors",
-              sidebarVisible ? "bg-[oklch(0.985_0_0)] text-[oklch(0.145_0_0)]" : "text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0_/_0.1)]"
+              "p-2.5 rounded-full transition-all duration-200 cursor-pointer select-none",
+              sidebarVisible 
+                ? "bg-[oklch(0.985_0_0)] text-[oklch(0.145_0_0)]" 
+                : "text-[oklch(0.85_0_0)] hover:text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0_/_0.08)]"
             )}
           >
-            <Menu className="h-4 w-4" />
-          </button>
+            <Menu className="h-5 w-5" />
+          </div>
           
           {/* Playlist Icon - Playlist Management */}
-          <button 
+          <div 
+            role="button"
+            tabIndex={0}
             data-playlist-toggle
             onClick={() => {
-              setPlaylistMenuVisible(!playlistMenuVisible)
-              setSidebarVisible(false)
+              if (playlistMenuVisible) {
+                closePlaylistMenu()
+              } else {
+                setPlaylistMenuVisible(true)
+                if (sidebarVisible) closeSidebar()
+              }
             }}
+            onKeyDown={(e) => e.key === 'Enter' && (playlistMenuVisible ? closePlaylistMenu() : setPlaylistMenuVisible(true))}
             className={cn(
-              "p-2.5 rounded-full transition-colors",
-              playlistMenuVisible ? "bg-[oklch(0.985_0_0)] text-[oklch(0.145_0_0)]" : "text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0_/_0.1)]"
-            )}
-          >
-            <ListVideo className="h-4 w-4" />
-          </button>
-          
-          {/* TV Tab */}
-          <button 
-            onClick={() => setContentType('live')}
-            className={cn(
-              "px-6 py-1.5 rounded-full text-sm font-medium transition-all",
-              contentType === 'live' 
+              "p-2.5 rounded-full transition-all duration-200 cursor-pointer select-none",
+              playlistMenuVisible 
                 ? "bg-[oklch(0.985_0_0)] text-[oklch(0.145_0_0)]" 
-                : "text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0_/_0.1)]"
+                : "text-[oklch(0.85_0_0)] hover:text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0_/_0.08)]"
             )}
           >
-            TV
-          </button>
+            <ListVideo className="h-5 w-5" />
+          </div>
           
-          {/* Movies Tab */}
-          <button 
-            onClick={() => setContentType('movie')}
-            className={cn(
-              "px-6 py-1.5 rounded-full text-sm font-medium transition-all",
-              contentType === 'movie' 
-                ? "bg-[oklch(0.985_0_0)] text-[oklch(0.145_0_0)]" 
-                : "text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0_/_0.1)]"
-            )}
-          >
-            Movies
-          </button>
+          {/* Separator */}
+          <div className="w-px h-6 bg-[oklch(1_0_0_/_0.1)]" />
           
-          {/* Series Tab */}
-          <button 
-            onClick={() => setContentType('series')}
-            className={cn(
-              "px-6 py-1.5 rounded-full text-sm font-medium transition-all",
-              contentType === 'series' 
-                ? "bg-[oklch(0.985_0_0)] text-[oklch(0.145_0_0)]" 
-                : "text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0_/_0.1)]"
-            )}
-          >
-            Series
-          </button>
+          {/* Tab Container with animated indicator */}
+          <div ref={tabsContainerRef} className="relative flex items-center rounded-full">
+            {/* Animated Tab Indicator using Motion */}
+            <motion.div 
+              className="absolute top-0 bottom-0 bg-[oklch(0.985_0_0)] rounded-full shadow-md"
+              initial={false}
+              animate={{
+                left: tabIndicator.left,
+                width: tabIndicator.width,
+              }}
+              transition={{
+                type: "spring",
+                stiffness: 500,
+                damping: 35,
+              }}
+            />
+            
+            {/* TV Tab */}
+            <div 
+              ref={(el) => { tabRefs.current.live = el }}
+              role="button"
+              tabIndex={0}
+              onClick={() => handleTabChange('live')}
+              onKeyDown={(e) => e.key === 'Enter' && handleTabChange('live')}
+              className={cn(
+                "relative z-10 px-5 py-2 rounded-full text-sm font-medium transition-colors duration-150 cursor-pointer select-none",
+                activeTab === 'live' 
+                  ? "text-[oklch(0.145_0_0)]" 
+                  : "text-[oklch(0.85_0_0)] hover:text-[oklch(0.985_0_0)]"
+              )}
+            >
+              TV
+            </div>
+            
+            {/* Movies Tab */}
+            <div 
+              ref={(el) => { tabRefs.current.movie = el }}
+              role="button"
+              tabIndex={0}
+              onClick={() => handleTabChange('movie')}
+              onKeyDown={(e) => e.key === 'Enter' && handleTabChange('movie')}
+              className={cn(
+                "relative z-10 px-5 py-2 rounded-full text-sm font-medium transition-colors duration-150 cursor-pointer select-none",
+                activeTab === 'movie' 
+                  ? "text-[oklch(0.145_0_0)]" 
+                  : !hasMovies
+                    ? "text-[oklch(0.4_0_0)] cursor-not-allowed"
+                    : "text-[oklch(0.85_0_0)] hover:text-[oklch(0.985_0_0)]"
+              )}
+            >
+              Movies
+            </div>
+            
+            {/* Series Tab */}
+            <div 
+              ref={(el) => { tabRefs.current.series = el }}
+              role="button"
+              tabIndex={0}
+              onClick={() => handleTabChange('series')}
+              onKeyDown={(e) => e.key === 'Enter' && handleTabChange('series')}
+              className={cn(
+                "relative z-10 px-5 py-2 rounded-full text-sm font-medium transition-colors duration-150 cursor-pointer select-none",
+                activeTab === 'series' 
+                  ? "text-[oklch(0.145_0_0)]" 
+                  : !hasSeries
+                    ? "text-[oklch(0.4_0_0)] cursor-not-allowed"
+                    : "text-[oklch(0.85_0_0)] hover:text-[oklch(0.985_0_0)]"
+              )}
+            >
+              Series
+            </div>
+            
+            {/* Offline Tab */}
+            <div 
+              ref={(el) => { tabRefs.current.offline = el }}
+              role="button"
+              tabIndex={0}
+              onClick={() => handleTabChange('offline')}
+              onKeyDown={(e) => e.key === 'Enter' && handleTabChange('offline')}
+              className={cn(
+                "relative z-10 px-5 py-2 rounded-full text-sm font-medium transition-colors duration-150 cursor-pointer select-none",
+                activeTab === 'offline' 
+                  ? "text-[oklch(0.145_0_0)]" 
+                  : !hasOffline
+                    ? "text-[oklch(0.4_0_0)]"
+                    : "text-[oklch(0.85_0_0)] hover:text-[oklch(0.985_0_0)]"
+              )}
+            >
+              Offline
+            </div>
+          </div>
+          
+          {/* Separator */}
+          <div className="w-px h-6 bg-[oklch(1_0_0_/_0.1)]" />
           
           {/* Search Icon - Opens Spotlight Search */}
-          <button 
+          <div 
+            role="button"
+            tabIndex={0}
             onClick={() => setSpotlightOpen(true)}
-            className="p-2.5 rounded-full hover:bg-[oklch(1_0_0_/_0.1)] transition-colors text-[oklch(0.985_0_0)] flex items-center gap-2"
+            onKeyDown={(e) => e.key === 'Enter' && setSpotlightOpen(true)}
+            className="p-2.5 rounded-full transition-all duration-200 text-[oklch(0.85_0_0)] hover:text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0_/_0.08)] cursor-pointer select-none"
             title="Search (⌘K)"
           >
-            <Search className="h-4 w-4" />
-          </button>
+            <Search className="h-5 w-5" />
+          </div>
         </div>
       </nav>
 
+      {/* Unavailable Content Message */}
+      {unavailableMessage && (
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-50 animate-slide-down">
+          <div className="bg-[oklch(0.205_0_0)] border border-[oklch(1_0_0_/_0.1)] rounded-xl px-5 py-3 shadow-xl backdrop-blur-xl flex items-center gap-3">
+            <AlertCircle className="h-4 w-4 text-[oklch(0.708_0_0)]" />
+            <span className="text-[oklch(0.985_0_0)] text-sm">{unavailableMessage}</span>
+            <button 
+              onClick={() => setUnavailableMessage(null)}
+              className="ml-2 text-[oklch(0.556_0_0)] hover:text-[oklch(0.985_0_0)] transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Content Area - Relative container for overlay */}
       <div className="flex-1 relative overflow-hidden px-4 pb-4 pt-1">
-        {/* Video Player - Full width and height */}
-        <div className="w-full h-full rounded-2xl overflow-hidden bg-black">
+        {/* Video Player - Full width and height, relative creates stacking context */}
+        <div className="w-full h-full rounded-2xl overflow-hidden bg-black relative isolate">
           {isLoading ? (
             <div className="w-full h-full flex items-center justify-center">
               <div className="text-center text-[oklch(0.556_0_0)]">
@@ -363,7 +810,13 @@ function PlaylistPage() {
 
         {/* Left Sidebar - Categories/Channels */}
         {sidebarVisible && (
-          <div ref={sidebarRef} className="absolute top-1 left-2 bottom-4 w-[340px] z-10">
+          <div 
+            ref={sidebarRef} 
+            className={cn(
+              "absolute top-1 left-2 bottom-4 w-[380px] z-30",
+              sidebarClosing ? "animate-slide-out-left" : "animate-slide-in-left"
+            )}
+          >
             <div className="h-full flex flex-col bg-[oklch(0.145_0_0_/_0.9)] backdrop-blur-xl rounded-2xl border border-[oklch(1_0_0_/_0.1)] overflow-hidden">
               {/* Search Box */}
               <div className="p-3 flex-shrink-0">
@@ -391,11 +844,13 @@ function PlaylistPage() {
               
               {/* Scrollable List */}
               <div className="flex-1 overflow-y-auto min-h-0">
-                {isLoading ? (
+                {(isLoading || sidebarLoading) ? (
                   // Loading State
                   <div className="flex flex-col items-center justify-center h-full py-12">
                     <Loader2 className="h-8 w-8 text-[oklch(0.556_0_0)] animate-spin mb-3" />
-                    <p className="text-[oklch(0.556_0_0)] text-sm">Loading playlist...</p>
+                    <p className="text-[oklch(0.556_0_0)] text-sm">
+                      {isLoading ? 'Loading playlist...' : 'Loading content...'}
+                    </p>
                   </div>
                 ) : loadError ? (
                   // Error State
@@ -405,47 +860,153 @@ function PlaylistPage() {
                   </div>
                 ) : (
                   <div className="px-2 pb-2 space-y-0.5">
-                    {selectedCategory ? (
-                      // Show Items (Channels) with logos
-                      (displayItems as PlaylistItem[]).map((item) => (
-                        <button
+                    {/* Offline Mode Content */}
+                    {activeTab === 'offline' ? (
+                      offlineItems.length > 0 ? (
+                        offlineItems.map((item, index) => (
+                          <div
+                            key={item.id}
+                            className={cn(
+                              "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-all duration-200 animate-scale-in group",
+                              selectedItem?.id === item.id 
+                                ? "bg-[oklch(0.269_0_0)]" 
+                                : "hover:bg-[oklch(0.269_0_0_/_0.5)]"
+                            )}
+                            style={{ animationDelay: `${Math.min(index * 20, 300)}ms`, animationFillMode: 'backwards' }}
+                          >
+                            {/* Thumbnail */}
+                            {item.thumbnail ? (
+                              <img 
+                                src={item.thumbnail} 
+                                alt="" 
+                                className="w-10 h-14 rounded object-cover bg-[oklch(1_0_0_/_0.1)] shrink-0"
+                              />
+                            ) : (
+                              <div className="w-10 h-14 rounded bg-[oklch(0.269_0_0)] flex items-center justify-center shrink-0">
+                                <Film className="h-4 w-4 text-[oklch(0.556_0_0)]" />
+                              </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <button
+                                onClick={() => setSelectedItem({
+                                  id: item.id,
+                                  name: item.name,
+                                  url: `file://${item.localPath}`,
+                                  groupTitle: 'Offline',
+                                  tvgLogo: item.thumbnail,
+                                })}
+                                className="text-[oklch(0.985_0_0)] text-sm truncate block w-full text-left hover:text-[oklch(0.9_0_0)]"
+                              >
+                                {item.name}
+                              </button>
+                              <p className="text-[oklch(0.556_0_0)] text-xs mt-0.5">
+                                {item.type === 'movie' ? 'Movie' : 'Series'} • {item.size ? `${(item.size / 1024 / 1024).toFixed(0)} MB` : 'Unknown size'}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => handleDeleteOfflineItem(item)}
+                              className="p-1.5 rounded-full hover:bg-[oklch(1_0_0_/_0.1)] text-[oklch(0.556_0_0)] hover:text-[oklch(0.704_0.191_22.216)] opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="flex flex-col items-center justify-center h-40 text-center">
+                          <HardDrive className="h-10 w-10 text-[oklch(0.556_0_0)] mb-3 opacity-50" />
+                          <p className="text-[oklch(0.556_0_0)] text-sm">No offline content</p>
+                          <p className="text-[oklch(0.456_0_0)] text-xs mt-1">Download movies or series to watch offline</p>
+                        </div>
+                      )
+                    ) : selectedCategory ? (
+                      // Show Items (Channels/Movies/Series) with logos
+                      (displayItems as PlaylistItem[]).map((item, index) => (
+                        <div
                           key={item.id}
-                          onClick={() => setSelectedItem(item)}
                           className={cn(
-                            "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-all text-left",
+                            "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-all duration-200 animate-scale-in group",
                             selectedItem?.id === item.id 
                               ? "bg-[oklch(0.269_0_0)]" 
-                              : "hover:bg-[oklch(0.269_0_0_/_0.5)]"
+                              : "hover:bg-[oklch(0.269_0_0_/_0.5)] hover:translate-x-1"
                           )}
+                          style={{ animationDelay: `${Math.min(index * 20, 300)}ms`, animationFillMode: 'backwards' }}
                         >
-                          {/* Channel Logo */}
+                          {/* Channel/Movie Logo */}
                           {item.tvgLogo ? (
                             <img 
                               src={item.tvgLogo} 
                               alt="" 
-                              className="w-7 h-7 rounded object-contain bg-[oklch(1_0_0_/_0.1)] shrink-0"
+                              className={cn(
+                                "rounded object-contain bg-[oklch(1_0_0_/_0.1)] shrink-0",
+                                contentType === 'live' ? "w-7 h-7" : "w-10 h-14 object-cover"
+                              )}
                               onError={(e) => {
                                 e.currentTarget.style.display = 'none'
                               }}
                             />
                           ) : (
-                            <div className="w-7 h-7 rounded bg-[oklch(0.269_0_0)] flex items-center justify-center shrink-0">
-                              <Tv className="h-3.5 w-3.5 text-[oklch(0.556_0_0)]" />
+                            <div className={cn(
+                              "rounded bg-[oklch(0.269_0_0)] flex items-center justify-center shrink-0",
+                              contentType === 'live' ? "w-7 h-7" : "w-10 h-14"
+                            )}>
+                              {contentType === 'live' ? (
+                                <Tv className="h-3.5 w-3.5 text-[oklch(0.556_0_0)]" />
+                              ) : (
+                                <Film className="h-4 w-4 text-[oklch(0.556_0_0)]" />
+                              )}
                             </div>
                           )}
-                          <span className="text-[oklch(0.985_0_0)] text-sm truncate flex-1">
+                          <button
+                            onClick={() => setSelectedItem(item)}
+                            className="text-[oklch(0.985_0_0)] text-sm truncate flex-1 text-left"
+                          >
                             {item.name}
-                          </span>
-                          <ChevronRight className="h-3.5 w-3.5 text-[oklch(0.556_0_0)] shrink-0" />
-                        </button>
+                          </button>
+                          
+                          {/* Download button for movies/series */}
+                          {(contentType === 'movie' || contentType === 'series') && (
+                            downloadingIds.has(item.id) ? (
+                              <div 
+                                className="relative shrink-0 cursor-pointer"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleCancelDownload(item.id)
+                                }}
+                                title="Click to cancel"
+                              >
+                                <PieProgress 
+                                  progress={downloadProgress[item.id] || 0} 
+                                  size={28}
+                                />
+                              </div>
+                            ) : isItemDownloaded(item.id) ? (
+                              <CheckCircle2 className="h-4 w-4 text-[oklch(0.7_0.2_145)] shrink-0" />
+                            ) : (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleDownload(item)
+                                }}
+                                className="p-1.5 rounded-full hover:bg-[oklch(1_0_0_/_0.1)] text-[oklch(0.556_0_0)] hover:text-[oklch(0.985_0_0)] opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                              >
+                                <Download className="h-4 w-4" />
+                              </button>
+                            )
+                          )}
+                          
+                          {contentType === 'live' && (
+                            <ChevronRight className="h-3.5 w-3.5 text-[oklch(0.556_0_0)] shrink-0 transition-transform duration-200 group-hover:translate-x-0.5" />
+                          )}
+                        </div>
                       ))
                     ) : (
                       // Show Categories
-                      (displayItems as Category[]).map((cat) => (
+                      (displayItems as Category[]).map((cat, index) => (
                         <button
                           key={cat.id}
                           onClick={() => handleCategorySelect(cat.id)}
-                          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg hover:bg-[oklch(0.269_0_0_/_0.5)] transition-all text-left"
+                          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg hover:bg-[oklch(0.269_0_0_/_0.5)] hover:translate-x-1 transition-all duration-200 text-left animate-scale-in"
+                          style={{ animationDelay: `${Math.min(index * 20, 300)}ms`, animationFillMode: 'backwards' }}
                         >
                           <span className="text-[oklch(0.985_0_0)] text-sm truncate flex-1">
                             {cat.name}
@@ -463,7 +1024,13 @@ function PlaylistPage() {
 
         {/* Playlist Management Sidebar */}
         {playlistMenuVisible && (
-          <div ref={playlistMenuRef} className="absolute top-1 left-2 bottom-4 w-[340px] z-10">
+          <div 
+            ref={playlistMenuRef} 
+            className={cn(
+              "absolute top-1 left-2 bottom-4 w-[380px] z-30",
+              playlistMenuClosing ? "animate-slide-out-left" : "animate-slide-in-left"
+            )}
+          >
             <div className="h-full flex flex-col bg-[oklch(0.145_0_0_/_0.9)] backdrop-blur-xl rounded-2xl border border-[oklch(1_0_0_/_0.1)] overflow-hidden">
               {/* Header with Add Button */}
               <div className="p-3 flex-shrink-0 flex justify-end">
@@ -472,7 +1039,7 @@ function PlaylistPage() {
                     setEditingPlaylist(null)
                     setIsAddModalOpen(true)
                   }}
-                  className="w-9 h-9 flex items-center justify-center bg-[oklch(0.269_0_0)] hover:bg-[oklch(0.3_0_0)] rounded-full text-[oklch(0.985_0_0)] transition-colors"
+                  className="w-9 h-9 flex items-center justify-center bg-[oklch(0.269_0_0)] hover:bg-[oklch(0.3_0_0)] hover:scale-105 active:scale-95 rounded-full text-[oklch(0.985_0_0)] transition-all duration-200"
                 >
                   <Plus className="h-4 w-4" />
                 </button>
@@ -481,16 +1048,17 @@ function PlaylistPage() {
               {/* Playlist List */}
               <div className="flex-1 overflow-y-auto min-h-0">
                 <div className="px-2 pb-2 space-y-1.5">
-                  {allPlaylists.map((p) => (
-                    <button
+                  {allPlaylists.map((p, index) => (
+                    <div
                       key={p.id}
-                      onClick={() => handleSwitchPlaylist(p.id)}
                       className={cn(
-                        "w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-all text-left group",
+                        "w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-all duration-200 text-left group cursor-pointer animate-scale-in",
                         p.id === playlistId 
                           ? "bg-[oklch(0.269_0_0)]" 
-                          : "hover:bg-[oklch(0.269_0_0_/_0.5)]"
+                          : "hover:bg-[oklch(0.269_0_0_/_0.5)] hover:translate-x-1"
                       )}
+                      style={{ animationDelay: `${Math.min(index * 50, 300)}ms`, animationFillMode: 'backwards' }}
+                      onClick={() => handleSwitchPlaylist(p.id)}
                     >
                       {/* Info */}
                       <div className="flex-1 min-w-0">
@@ -502,30 +1070,42 @@ function PlaylistPage() {
                         </p>
                       </div>
                       
-                      {/* Edit Button */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setEditingPlaylist(p)
-                          setIsAddModalOpen(true)
-                        }}
-                        className="p-1.5 rounded-full hover:bg-[oklch(1_0_0_/_0.1)] text-[oklch(0.985_0_0)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      
-                      {/* Delete Button */}
-                      <button
-                        onClick={(e) => handleDeletePlaylist(e, p.id)}
-                        className="p-1.5 rounded-full hover:bg-[oklch(1_0_0_/_0.1)] text-[oklch(0.985_0_0)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </button>
+                      {/* Three-dot Menu */}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          onClick={(e) => e.stopPropagation()}
+                          className="p-1.5 rounded-full hover:bg-[oklch(1_0_0_/_0.15)] text-[oklch(0.556_0_0)] hover:text-[oklch(0.985_0_0)] opacity-0 group-hover:opacity-100 transition-all duration-200 shrink-0"
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setEditingPlaylist(p)
+                              setIsAddModalOpen(true)
+                            }}
+                          >
+                            <Pencil className="h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDeletePlaylist(e as any, p.id)
+                            }}
+                            className="text-[oklch(0.704_0.191_22.216)]"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   ))}
                   
                   {allPlaylists.length === 0 && (
-                    <div className="text-center py-8">
+                    <div className="text-center py-8 animate-scale-in">
                       <p className="text-[oklch(0.556_0_0)] text-sm">No playlists yet</p>
                     </div>
                   )}
@@ -566,6 +1146,7 @@ function PlaylistPage() {
           setSidebarVisible(true)
         }}
       />
+      
     </div>
   )
 }
