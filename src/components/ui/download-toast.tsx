@@ -90,15 +90,15 @@ export function DownloadToast({
     : formatBytes(downloadedBytes)
   
   return (
-    <div className="w-full">
+    <div className="w-80 p-4 bg-[oklch(0.18_0_0)] rounded-xl border border-[oklch(1_0_0/0.1)] shadow-xl">
       {/* Header with name and cancel button */}
-      <div className="flex items-start justify-between gap-2 mb-2">
+      <div className="flex items-start justify-between gap-3 mb-3">
         <span className="text-sm font-medium text-[oklch(0.985_0_0)] truncate flex-1" title={name}>
           {name}
         </span>
         <button
           onClick={onCancel}
-          className="p-1 rounded-full hover:bg-[oklch(1_0_0/0.1)] text-[oklch(0.556_0_0)] hover:text-[oklch(0.985_0_0)] transition-colors shrink-0"
+          className="p-1.5 -m-1 rounded-full hover:bg-[oklch(1_0_0/0.1)] text-[oklch(0.556_0_0)] hover:text-[oklch(0.985_0_0)] transition-colors shrink-0"
           title="Cancel download"
         >
           <X className="h-4 w-4" />
@@ -106,7 +106,7 @@ export function DownloadToast({
       </div>
       
       {/* Progress bar */}
-      <div className="h-2 bg-[oklch(0.269_0_0)] rounded-full overflow-hidden mb-2">
+      <div className="h-1.5 bg-[oklch(0.269_0_0)] rounded-full overflow-hidden mb-3">
         <div 
           className="h-full bg-[oklch(0.488_0.243_264.376)] rounded-full transition-all duration-300 ease-out"
           style={{ width: `${percentage}%` }}
@@ -116,7 +116,7 @@ export function DownloadToast({
       {/* Stats */}
       <div className="flex items-center justify-between text-xs text-[oklch(0.556_0_0)]">
         <span>{sizeStr}</span>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           {speedStr && <span>{speedStr}</span>}
           <span className="font-medium text-[oklch(0.985_0_0)]">{percentage}%</span>
         </div>

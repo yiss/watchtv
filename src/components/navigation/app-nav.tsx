@@ -1,5 +1,5 @@
 import { motion } from 'motion/react'
-import { Menu, ListVideo, Search } from 'lucide-react'
+import { Menu, Antenna, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ContentTabs } from './content-tabs'
 
@@ -33,9 +33,11 @@ export function AppNav({
       initial={{ y: -50, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ type: "spring", stiffness: 300, damping: 25, delay: 0.1 }}
-      className="flex items-center justify-center py-3 px-6 flex-shrink-0 z-20 relative -mt-8 pt-8"
+      data-tauri-drag-region
+      className="flex items-center justify-center py-3 px-6 flex-shrink-0 z-20 relative -mt-8 pt-8 select-none"
+      style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
-      <div className="flex items-center gap-3 bg-[oklch(0.18_0_0)] rounded-full px-2 py-1.5 border border-[oklch(1_0_0/0.08)] shadow-xl shadow-black/30">
+      <div className="flex items-center gap-3 bg-[oklch(0.18_0_0)] rounded-full px-2 py-1.5 border border-[oklch(1_0_0/0.08)] shadow-xl shadow-black/30" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         {/* Menu Toggle Icon - Categories/Channels */}
         <NavButton
           isActive={sidebarVisible}
@@ -48,7 +50,7 @@ export function AppNav({
         <NavButton
           isActive={playlistMenuVisible}
           onClick={onTogglePlaylistMenu}
-          icon={<ListVideo className="h-5 w-5" />}
+          icon={<Antenna className="h-5 w-5" />}
           dataAttr="data-playlist-toggle"
         />
         
