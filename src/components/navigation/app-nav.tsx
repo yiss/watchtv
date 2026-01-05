@@ -2,6 +2,7 @@ import { motion } from 'motion/react'
 import { Menu, Antenna, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ContentTabs } from './content-tabs'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 interface AppNavProps {
   sidebarVisible: boolean
@@ -70,16 +71,25 @@ export function AppNav({
         <div className="w-px h-6 bg-[oklch(1_0_0/0.1)]" />
         
         {/* Search Icon - Opens Spotlight Search */}
-        <div 
-          role="button"
-          tabIndex={0}
-          onClick={onOpenSearch}
-          onKeyDown={(e) => e.key === 'Enter' && onOpenSearch()}
-          className="p-2.5 rounded-full transition-all duration-200 text-[oklch(0.85_0_0)] hover:text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0/0.08)] cursor-pointer select-none"
-          title="Search (⌘K)"
-        >
-          <Search className="h-5 w-5" />
-        </div>
+        <Tooltip>
+          <TooltipTrigger
+            render={(props) => (
+              <div 
+                {...props}
+                role="button"
+                tabIndex={0}
+                onClick={onOpenSearch}
+                onKeyDown={(e) => e.key === 'Enter' && onOpenSearch()}
+                className="p-2.5 rounded-full transition-all duration-200 text-[oklch(0.85_0_0)] hover:text-[oklch(0.985_0_0)] hover:bg-[oklch(1_0_0/0.08)] cursor-pointer select-none"
+              >
+                <Search className="h-5 w-5" />
+              </div>
+            )}
+          />
+          <TooltipContent>
+            Search (⌘K)
+          </TooltipContent>
+        </Tooltip>
       </div>
     </motion.nav>
   )

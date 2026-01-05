@@ -119,8 +119,9 @@
   * {
     @apply border-border outline-ring/50;
   }
-  body {
-    @apply bg-background text-foreground;
+  html, body {
+    @apply text-foreground;
+    background: oklch(0.1 0 0);
   }
 }
 

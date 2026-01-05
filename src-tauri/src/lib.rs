@@ -5,8 +5,6 @@ mod transcode;
 mod types;
 
 use std::collections::HashMap;
-use std::process::Stdio;
-use tokio::process::Command;
 
 pub use types::*;
 pub use db::{init_db, get_db};
@@ -18,56 +16,6 @@ pub use transcode::TranscodeState;
 #[tauri::command]
 async fn fetch_and_parse_m3u(url: String) -> Result<ParsedPlaylist, String> {
     playlist::fetch_and_parse_m3u(&url).await
-}
-
-#[tauri::command]
-async fn play_with_mpv(url: String, title: String) -> Result<(), String> {
-    println!("Playing with mpv: {} - {}", title, url);
-    
-    let result = Command::new("mpv")
-        .args([
-            "--title", &title,
-            "--force-window=immediate",
-            "--keep-open=no",
-            "--no-terminal",
-            &url,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
-    
-    match result {
-        Ok(_) => Ok(()),
-        Err(e) => {
-            let iina_result = Command::new("iina")
-                .args(["--no-stdin", &url])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn();
-            
-            match iina_result {
-                Ok(_) => Ok(()),
-                Err(_) => {
-                    let vlc_result = Command::new("/Applications/VLC.app/Contents/MacOS/VLC")
-                        .args(["--no-video-title-show", &url])
-                        .stdin(Stdio::null())
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .spawn();
-                    
-                    match vlc_result {
-                        Ok(_) => Ok(()),
-                        Err(_) => Err(format!(
-                            "No compatible video player found. Please install mpv, IINA, or VLC. Error: {}", 
-                            e
-                        )),
-                    }
-                }
-            }
-        }
-    }
 }
 
 #[tauri::command]
@@ -229,14 +177,16 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             fetch_and_parse_m3u,
-            play_with_mpv,
+            // Download commands
             download_video,
             cancel_download,
             delete_download,
             get_downloads_path,
+            // Transcode commands
             start_transcode,
             stop_transcode,
             needs_transcoding,
+            // Cache commands
             cache_playlist_data,
             get_cached_categories,
             get_cached_channels,
@@ -244,6 +194,7 @@ pub fn run() {
             clear_playlist_cache,
             search_cached_channels,
             get_content_availability,
+            // State commands
             save_last_viewed_state,
             get_last_viewed_state
         ])

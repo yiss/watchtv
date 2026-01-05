@@ -107,6 +107,14 @@ export function usePlayerSource() {
     
     const handleError = () => {
       const err = videoElement.error;
+      
+      // If format not supported (code 4) or decode error (code 3), try transcoding
+      if (err && (err.code === 3 || err.code === 4) && !transcodeUrl) {
+        console.log('Format not supported, attempting to transcode...');
+        startTranscode(src || '');
+        return;
+      }
+      
       const errorMessages: Record<number, string> = {
         1: 'Video loading aborted',
         2: 'Network error - check your connection',
@@ -130,7 +138,12 @@ export function usePlayerSource() {
     const isLocalFile = src?.startsWith('file://');
     const isUnsupportedFormat = /\.(mkv|avi|wmv|flv|mov)(\?|$)/i.test(src || '');
     
-    console.log('Stream detection:', { isM3U8, isTSStream, isLocalFile, isUnsupportedFormat });
+    // Detect Xtream Codes style streams (numeric path like /123456/abcdef/12345)
+    const isXtreamStream = /:\d+\/\d+\/[a-zA-Z0-9]+\/\d+$/.test(src || '');
+    // Detect if it's likely an IPTV stream (no clear extension, HTTP)
+    const isIPTVStream = src?.startsWith('http') && !src?.match(/\.(m3u8|mp4|webm|ts|mkv|avi|wmv|flv|mov)(\?|$)/i);
+    
+    console.log('Stream detection:', { isM3U8, isTSStream, isLocalFile, isUnsupportedFormat, isXtreamStream, isIPTVStream });
     
     // For unsupported formats, start transcoding
     if (isUnsupportedFormat && !transcodeUrl) {
@@ -149,8 +162,52 @@ export function usePlayerSource() {
       };
     }
     
+    // For Xtream Codes or unknown IPTV streams, try mpegts.js first
+    if ((isXtreamStream || isIPTVStream) && !isM3U8 && mpegts.isSupported()) {
+      console.log('Using mpegts.js for IPTV/Xtream stream');
+      
+      const player = mpegts.createPlayer({
+        type: 'mpegts',
+        isLive: isLive,
+        url: videoSrc,
+      }, {
+        enableWorker: true,
+        // Buffer settings for smoother playback
+        enableStashBuffer: true,
+        stashInitialSize: 1024 * 384, // 384KB initial buffer
+        // Live stream settings
+        liveBufferLatencyChasing: true,
+        liveBufferLatencyMaxLatency: 5.0, // Max 5 seconds behind live
+        liveBufferLatencyMinRemain: 1.0, // Keep at least 1 second buffer
+        // Auto cleanup for memory
+        autoCleanupSourceBuffer: true,
+        autoCleanupMaxBackwardDuration: 60, // Keep 60 seconds of backward buffer
+        autoCleanupMinBackwardDuration: 30, // Min 30 seconds before cleanup
+        // Seeking optimization
+        seekType: 'range',
+        // Larger chunks for better network efficiency
+        lazyLoadMaxDuration: 180, // 3 minutes
+        lazyLoadRecoverDuration: 30, // Recover 30 seconds ahead
+      });
+      
+      setMpegtsInstance(player);
+      player.attachMediaElement(videoElement);
+      player.load();
+      
+      player.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
+        console.error('mpegts.js error for IPTV stream:', errorType, errorDetail, errorInfo);
+        // If mpegts fails, try transcoding
+        if (!transcodeUrl) {
+          console.log('mpegts.js failed, falling back to transcode');
+          cleanup();
+          startTranscode(src || '');
+        } else {
+          setError(`Stream error: ${errorDetail}`);
+        }
+      });
+    }
     // For local files or direct streams
-    if (isLocalFile || (!isM3U8 && !isTSStream)) {
+    else if (isLocalFile || (!isM3U8 && !isTSStream && !isXtreamStream && !isIPTVStream)) {
       console.log('Playing local/direct file:', videoSrc);
       videoElement.src = videoSrc;
     }
@@ -160,8 +217,25 @@ export function usePlayerSource() {
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: isLive,
-        liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 10,
+        // Buffer settings
+        liveSyncDurationCount: 4, // Segments to keep in live sync
+        liveMaxLatencyDurationCount: 12, // Max segments behind live edge
+        liveDurationInfinity: true, // For live streams
+        // Buffering
+        maxBufferLength: 30, // Max buffer ahead in seconds
+        maxMaxBufferLength: 60, // Absolute max buffer
+        maxBufferSize: 60 * 1000 * 1000, // 60MB max buffer size
+        maxBufferHole: 0.5, // Max gap in buffer to tolerate
+        // Loading
+        fragLoadingMaxRetry: 6, // Retry fragment loading
+        fragLoadingRetryDelay: 1000, // 1 second retry delay
+        fragLoadingMaxRetryTimeout: 64000, // Max retry timeout
+        // Start position
+        startPosition: -1, // Start from live edge for live streams
+        // ABR (Adaptive Bitrate)
+        abrEwmaDefaultEstimate: 500000, // Initial bandwidth estimate (500kbps)
+        abrBandWidthFactor: 0.95, // Conservative bandwidth usage
+        abrBandWidthUpFactor: 0.7, // Even more conservative for upgrade
       });
       setHlsInstance(hls);
       
@@ -207,11 +281,21 @@ export function usePlayerSource() {
         url: videoSrc,
       }, {
         enableWorker: true,
-        enableStashBuffer: false,
-        stashInitialSize: 128,
+        // Buffer settings for smoother playback
+        enableStashBuffer: true,
+        stashInitialSize: 1024 * 384, // 384KB initial buffer
+        // Live stream settings
         liveBufferLatencyChasing: true,
-        liveBufferLatencyMaxLatency: 3.0,
-        liveBufferLatencyMinRemain: 0.5,
+        liveBufferLatencyMaxLatency: 5.0,
+        liveBufferLatencyMinRemain: 1.0,
+        // Auto cleanup for memory
+        autoCleanupSourceBuffer: true,
+        autoCleanupMaxBackwardDuration: 60,
+        autoCleanupMinBackwardDuration: 30,
+        // Seeking optimization
+        seekType: 'range',
+        lazyLoadMaxDuration: 180,
+        lazyLoadRecoverDuration: 30,
       });
       
       setMpegtsInstance(player);
@@ -220,7 +304,14 @@ export function usePlayerSource() {
       
       player.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
         console.error('mpegts.js error:', errorType, errorDetail, errorInfo);
-        setError(`Stream error: ${errorDetail}`);
+        // Try transcoding if mpegts fails
+        if (!transcodeUrl) {
+          console.log('mpegts.js failed, falling back to transcode');
+          cleanup();
+          startTranscode(src || '');
+        } else {
+          setError(`Stream error: ${errorDetail}`);
+        }
       });
     }
     
