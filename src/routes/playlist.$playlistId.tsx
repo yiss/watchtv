@@ -35,8 +35,8 @@ function PlaylistPage() {
   // Player state
   const isFullscreen = useIsFullscreen()
   
-  // UI state
-  const [sidebarVisible, setSidebarVisible] = useState(true)
+  // UI state - sidebar starts closed until data loads
+  const [sidebarVisible, setSidebarVisible] = useState(false)
   const [playlistMenuVisible, setPlaylistMenuVisible] = useState(false)
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null)
@@ -61,6 +61,16 @@ function PlaylistPage() {
     actions.loadPlaylist(playlistId)
   }, [playlistId])
 
+  // Open sidebar once data is fully loaded (both main loading and sidebar loading must be complete)
+  useEffect(() => {
+    if (state.isLoading || state.sidebarLoading) return
+    
+    const hasContent = state.categories.length > 0 || state.offlineItems.length > 0
+    if (hasContent) {
+      setSidebarVisible(true)
+    }
+  }, [state.isLoading, state.sidebarLoading, state.categories.length, state.offlineItems.length])
+
   // Auto-dismiss unavailable message
   useEffect(() => {
     if (unavailableMessage) {
@@ -72,23 +82,29 @@ function PlaylistPage() {
   // Click outside handler
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node
+      
+      // Don't close sidebars when clicking on the nav bar
+      const navBar = document.querySelector('nav')
+      if (navBar && navBar.contains(target)) return
+      
       if (
         sidebarVisible && 
         sidebarRef.current && 
-        !sidebarRef.current.contains(event.target as Node)
+        !sidebarRef.current.contains(target)
       ) {
         const menuButton = document.querySelector('[data-menu-toggle]')
-        if (menuButton && menuButton.contains(event.target as Node)) return
+        if (menuButton && menuButton.contains(target)) return
         setSidebarVisible(false)
       }
       
       if (
         playlistMenuVisible && 
         playlistMenuRef.current && 
-        !playlistMenuRef.current.contains(event.target as Node)
+        !playlistMenuRef.current.contains(target)
       ) {
         const playlistButton = document.querySelector('[data-playlist-toggle]')
-        if (playlistButton && playlistButton.contains(event.target as Node)) return
+        if (playlistButton && playlistButton.contains(target)) return
         setPlaylistMenuVisible(false)
       }
     }
